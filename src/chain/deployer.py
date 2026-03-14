@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -13,7 +14,7 @@ class ContractDeployer:
     def __init__(self, build_dir: str, rpc_url: str, private_key: str | None = None):
         self.build_dir = Path(build_dir)
         self.rpc_url = rpc_url
-        self.private_key = private_key
+        self._private_key = private_key
 
     def compile_contracts(self, contracts_dir: str) -> bool:
         """Compile Solidity contracts with Foundry.
@@ -49,7 +50,7 @@ class ContractDeployer:
         Returns:
             Dict with deployed address and tx hash.
         """
-        if not self.private_key:
+        if not self._private_key:
             return {
                 "deployed": False,
                 "reason": "No private key configured — paper mode",
@@ -59,7 +60,6 @@ class ContractDeployer:
         cmd = [
             "forge", "create",
             "--rpc-url", self.rpc_url,
-            "--private-key", self.private_key,
             contract_path,
         ]
 
@@ -67,8 +67,10 @@ class ContractDeployer:
             cmd.append("--constructor-args")
             cmd.extend(constructor_args)
 
+        # NOTE: --private-key appears in process listing (Foundry limitation).
+        # For production, use `cast wallet import` + `--account <name>` instead.
         result = subprocess.run(
-            cmd,
+            cmd + ["--private-key", self._private_key],
             cwd=contracts_dir,
             capture_output=True,
             text=True,

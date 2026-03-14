@@ -88,23 +88,31 @@ class OnChainVerifier:
             }
 
     def _parse_calldata(self, calldata: str) -> dict:
-        """Parse snarkjs calldata output into contract call parameters."""
+        """Parse snarkjs calldata output into contract call parameters.
+
+        snarkjs exports: ["0x..","0x.."],[["0x..","0x.."],["0x..","0x.."]],["0x..","0x.."],["0x.."]
+        We wrap the whole thing in an array and parse as JSON.
+        """
         import json
 
-        # snarkjs outputs: ["a1","a2"],[["b11","b12"],["b21","b22"]],["c1","c2"],["i1","i2",...]
-        # We need to parse this carefully
-        parts = calldata.split("],[")
+        # Wrap in array brackets to make valid JSON: [[a],[b],[c],[inputs]]
+        wrapped = "[" + calldata.strip() + "]"
+        try:
+            parsed = json.loads(wrapped)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Failed to parse snarkjs calldata: {e}")
 
-        # This is a simplified parser — in production, use proper parsing
-        a = json.loads(parts[0] + "]")
-        b_raw = "[" + parts[1] + "]"
-        b = json.loads(b_raw)
-        c = json.loads("[" + parts[2] + "]")
-        inputs = json.loads("[" + parts[3])
+        if len(parsed) != 4:
+            raise ValueError(f"Expected 4 calldata components, got {len(parsed)}")
+
+        def to_int(x: str) -> int:
+            if isinstance(x, str) and x.startswith("0x"):
+                return int(x, 16)
+            return int(x)
 
         return {
-            "a": [int(x, 16) if isinstance(x, str) and x.startswith("0x") else int(x) for x in a],
-            "b": [[int(x, 16) if isinstance(x, str) and x.startswith("0x") else int(x) for x in row] for row in b],
-            "c": [int(x, 16) if isinstance(x, str) and x.startswith("0x") else int(x) for x in c],
-            "inputs": [int(x, 16) if isinstance(x, str) and x.startswith("0x") else int(x) for x in inputs],
+            "a": [to_int(x) for x in parsed[0]],
+            "b": [[to_int(x) for x in row] for row in parsed[1]],
+            "c": [to_int(x) for x in parsed[2]],
+            "inputs": [to_int(x) for x in parsed[3]],
         }

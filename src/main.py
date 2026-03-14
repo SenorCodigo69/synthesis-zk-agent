@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 
 import click
@@ -15,6 +16,20 @@ from src.privacy.policy import PolicyManager
 from src.privacy.executor import PrivateExecutor
 from src.privacy.disclosure import DisclosureController
 from src.database import Database
+
+
+def _get_owner_key(owner_key: str | None) -> str:
+    """Resolve owner private key: explicit arg > env var > interactive prompt.
+
+    Never use --owner-key in production — it leaks to shell history and ps.
+    Set OWNER_PRIVATE_KEY env var instead.
+    """
+    if owner_key:
+        return owner_key
+    env_key = os.environ.get("OWNER_PRIVATE_KEY")
+    if env_key:
+        return env_key
+    return click.prompt("Owner private key (BJJ hex)", hide_input=True)
 
 
 @click.group()
@@ -39,13 +54,14 @@ def keygen():
 
 
 @cli.command()
-@click.option("--owner-key", required=True, help="Owner's BJJ private key (hex)")
+@click.option("--owner-key", default=None, help="Owner's BJJ private key (prefer OWNER_PRIVATE_KEY env var)")
 @click.option("--agent-id", default=1, help="Agent identifier")
 @click.option("--spend-limit", default=5000, help="Max single spend (USDC)")
 @click.option("--valid-days", default=7, help="Delegation validity (days)")
 @click.pass_context
 def delegate(ctx, owner_key, agent_id, spend_limit, valid_days):
     """Create a signed delegation from owner to agent."""
+    owner_key = _get_owner_key(owner_key)
     click.echo("=== Creating Delegation ===")
 
     delegation = create_delegation(
@@ -115,12 +131,13 @@ def prove_budget(ctx, amount, budget):
 
 
 @cli.command()
-@click.option("--owner-key", required=True, help="Owner's BJJ private key (hex)")
+@click.option("--owner-key", default=None, help="Owner's BJJ private key (prefer OWNER_PRIVATE_KEY env var)")
 @click.option("--agent-id", default=1, help="Agent identifier")
 @click.option("--spend-limit", default=5000, help="Spend limit (USDC)")
 @click.pass_context
 def prove_auth(ctx, owner_key, agent_id, spend_limit):
     """Generate an authorization proof: prove agent is delegated by owner."""
+    owner_key = _get_owner_key(owner_key)
     config = ctx.obj["config"]
     prover = ZKProver(config["zk"]["build_dir"])
 
@@ -160,13 +177,14 @@ def prove_auth(ctx, owner_key, agent_id, spend_limit):
 
 
 @cli.command()
-@click.option("--owner-key", required=True, help="Owner's BJJ private key (hex)")
+@click.option("--owner-key", default=None, help="Owner's BJJ private key (prefer OWNER_PRIVATE_KEY env var)")
 @click.option("--amount", required=True, type=int, help="Amount to spend (USDC)")
 @click.option("--protocol", default="aave-v3", help="Target protocol")
 @click.option("--mode", type=click.Choice(["paper", "dry_run"]), default="paper")
 @click.pass_context
 def execute(ctx, owner_key, amount, protocol, mode):
     """Execute a private DeFi action with full ZK compliance check."""
+    owner_key = _get_owner_key(owner_key)
     config = ctx.obj["config"]
     prover = ZKProver(config["zk"]["build_dir"])
     policy_mgr = PolicyManager(prover, config)
@@ -215,11 +233,12 @@ def execute(ctx, owner_key, amount, protocol, mode):
 
 
 @cli.command()
-@click.option("--owner-key", required=True, help="Owner's BJJ private key (hex)")
+@click.option("--owner-key", default=None, help="Owner's BJJ private key (prefer OWNER_PRIVATE_KEY env var)")
 @click.option("--level", type=click.Choice(["auditor", "tax_authority", "public"]), default="auditor")
 @click.pass_context
 def disclose(ctx, owner_key, level):
     """Generate selective disclosure proofs for a specific audience."""
+    owner_key = _get_owner_key(owner_key)
     config = ctx.obj["config"]
     prover = ZKProver(config["zk"]["build_dir"])
     disclosure_level = DisclosureLevel(level)

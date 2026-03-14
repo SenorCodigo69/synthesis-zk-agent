@@ -8,11 +8,22 @@ The commitment scheme (Option B from design doc):
 """
 from __future__ import annotations
 
+import copy
 import secrets
 import time
 
 from src.models import AgentDelegation, PolicyState, ProofType, SpendRecord
 from src.zk.keys import generate_keys, poseidon_hash, sign_message
+
+# Sequential nonce counter (per-process; persisted via database in production)
+_nonce_counter = 0
+
+
+def _next_nonce() -> int:
+    """Return a sequential nonce for anti-replay protection."""
+    global _nonce_counter
+    _nonce_counter += 1
+    return _nonce_counter
 
 
 def create_delegation(
@@ -37,7 +48,7 @@ def create_delegation(
         AgentDelegation with all fields populated.
     """
     if nonce is None:
-        nonce = secrets.randbits(64)
+        nonce = _next_nonce()
     if salt is None:
         salt = secrets.randbits(128)
 
@@ -108,7 +119,9 @@ def record_spend(
     tx_hash: str | None = None,
     new_salt: int | None = None,
 ) -> PolicyState:
-    """Record a spend and update the cumulative commitment.
+    """Record a spend and return a new PolicyState with updated commitment.
+
+    The original state is not modified.
 
     Args:
         state: Current policy state.
@@ -119,7 +132,7 @@ def record_spend(
         new_salt: Salt for new commitment (use proof's salt for consistency).
 
     Returns:
-        Updated PolicyState with new commitment.
+        New PolicyState with updated commitment.
     """
     new_total = state.cumulative_total + amount
     if new_salt is None:
@@ -140,9 +153,10 @@ def record_spend(
         tx_hash=tx_hash,
     )
 
-    state.cumulative_total = new_total
-    state.current_commitment = new_commitment
-    state.current_salt = new_salt
-    state.spend_history.append(record)
+    new_state = copy.deepcopy(state)
+    new_state.cumulative_total = new_total
+    new_state.current_commitment = new_commitment
+    new_state.current_salt = new_salt
+    new_state.spend_history.append(record)
 
-    return state
+    return new_state

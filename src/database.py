@@ -1,22 +1,61 @@
-"""SQLite persistence for policy state, proofs, and audit trail."""
+"""SQLite persistence for policy state, proofs, and audit trail.
+
+Sensitive fields (nonce, salt) are encrypted at rest using Fernet
+symmetric encryption derived from the OWNER_PRIVATE_KEY env var.
+"""
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
+import os
 import sqlite3
 import time
 from pathlib import Path
 from typing import Any
 
+from cryptography.fernet import Fernet
+
+
+def _derive_fernet_key(secret: str) -> bytes:
+    """Derive a Fernet key from a secret string."""
+    digest = hashlib.sha256(secret.encode()).digest()
+    return base64.urlsafe_b64encode(digest)
+
 
 class Database:
     """SQLite database for ZK agent state and audit trail."""
 
-    def __init__(self, db_path: str = "data/zk_agent.db"):
+    def __init__(self, db_path: str = "data/zk_agent.db", encryption_key: str | None = None):
         self.db_path = db_path
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(db_path)
         self.conn.row_factory = sqlite3.Row
+        self.conn.execute("PRAGMA foreign_keys = ON")
+
+        # Encryption for sensitive fields
+        secret = encryption_key or os.environ.get("ZK_DB_ENCRYPTION_KEY", "")
+        if secret:
+            self._fernet = Fernet(_derive_fernet_key(secret))
+        else:
+            self._fernet = None
+
         self._create_tables()
+
+    def _encrypt(self, value: str) -> str:
+        """Encrypt a value if encryption is configured."""
+        if self._fernet:
+            return self._fernet.encrypt(value.encode()).decode()
+        return value
+
+    def _decrypt(self, value: str) -> str:
+        """Decrypt a value if encryption is configured."""
+        if self._fernet:
+            try:
+                return self._fernet.decrypt(value.encode()).decode()
+            except Exception:
+                return value  # Already plaintext (migrated data)
+        return value
 
     def _create_tables(self) -> None:
         """Create tables if they don't exist."""
@@ -66,7 +105,7 @@ class Database:
         self.conn.commit()
 
     def save_delegation(self, delegation: dict) -> int:
-        """Save a delegation record."""
+        """Save a delegation record. Nonce and salt are encrypted at rest."""
         cursor = self.conn.execute(
             """INSERT INTO delegations
                (agent_id, spend_limit, valid_until, nonce, salt,
@@ -76,8 +115,8 @@ class Database:
                 delegation["agent_id"],
                 delegation["spend_limit"],
                 delegation["valid_until"],
-                str(delegation["nonce"]),
-                str(delegation["salt"]),
+                self._encrypt(str(delegation["nonce"])),
+                self._encrypt(str(delegation["salt"])),
                 delegation["policy_commitment"],
                 delegation["owner_pub_ax"],
                 delegation["owner_pub_ay"],

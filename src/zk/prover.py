@@ -60,6 +60,12 @@ class ZKProver:
         self._check_circuit_ready(proof_type)
         paths = self._circuit_paths(proof_type)
 
+        # Validate inputs are numeric (prevent malformed data reaching snarkjs)
+        for k, v in inputs.items():
+            sv = str(v)
+            if not sv.lstrip("-").isdigit():
+                raise ValueError(f"Invalid circuit input '{k}': must be numeric, got '{sv}'")
+
         # Convert all inputs to strings (snarkjs expects string values)
         str_inputs = {k: str(v) for k, v in inputs.items()}
 
@@ -124,7 +130,9 @@ class ZKProver:
                  str(vkey_file), str(public_file), str(proof_file)],
                 capture_output=True, text=True, timeout=30,
             )
-            return result.returncode == 0 and "OK" in result.stdout
+            is_valid = result.returncode == 0 and "OK" in result.stdout
+            zk_proof.verified = is_valid
+            return is_valid
 
     def export_calldata(self, zk_proof: ZKProof) -> str:
         """Export proof as Solidity calldata for on-chain verification.

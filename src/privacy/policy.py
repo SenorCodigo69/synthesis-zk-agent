@@ -98,16 +98,18 @@ class PolicyManager:
         Returns:
             Dict with proof, new commitment, and limit status.
         """
-        # Check if period has reset
-        if time.time() - state.period_start > self.period_seconds:
-            # Period expired — would need to reset state
-            return {
-                "within_limit": True,
-                "reason": "Period expired, reset needed",
-                "needs_reset": True,
-            }
-
         import secrets
+        from src.zk.keys import poseidon_hash
+
+        # Auto-reset if period expired
+        if time.time() - state.period_start > self.period_seconds:
+            state.cumulative_total = 0
+            state.period_start = time.time()
+            state.current_salt = secrets.randbits(128)
+            state.current_commitment = poseidon_hash([
+                0, state.period_limit, state.current_salt
+            ])
+
         new_salt = secrets.randbits(128)
 
         inputs = {
@@ -151,16 +153,6 @@ class PolicyManager:
             return {"compliant": False, "reason": "Budget exceeded", "budget": budget}
 
         cumulative = self.check_cumulative(amount, state)
-        if cumulative.get("needs_reset"):
-            # Period expired, still compliant
-            return {
-                "compliant": True,
-                "auth": auth,
-                "budget": budget,
-                "cumulative": cumulative,
-                "needs_period_reset": True,
-            }
-
         if not cumulative["within_limit"]:
             return {
                 "compliant": False,

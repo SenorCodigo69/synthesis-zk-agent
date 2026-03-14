@@ -7,6 +7,7 @@ Each disclosure generates a purpose-specific ZK proof:
 """
 from __future__ import annotations
 
+import secrets
 from typing import Any
 
 from src.models import DisclosureLevel, DisclosureProof, PolicyState, ProofType
@@ -50,11 +51,11 @@ class DisclosureController:
         total = state.cumulative_total
         limit = state.delegation.spend_limit
 
-        # Generate a range proof showing total <= limit
+        # Generate a range proof showing total <= limit (unique salt per disclosure)
         inputs = {
             "amount": total,
             "maxBudget": limit,
-            "salt": state.delegation.salt,
+            "salt": secrets.randbits(128),
         }
 
         proof = self.prover.generate_proof(ProofType.BUDGET_RANGE, inputs)
@@ -84,7 +85,7 @@ class DisclosureController:
         inputs = {
             "amount": total,
             "maxBudget": limit,
-            "salt": state.delegation.salt,
+            "salt": secrets.randbits(128),
         }
 
         proof = self.prover.generate_proof(ProofType.BUDGET_RANGE, inputs)
@@ -115,7 +116,7 @@ class DisclosureController:
         inputs = {
             "amount": state.cumulative_total,
             "maxBudget": current_balance,
-            "salt": state.delegation.salt,
+            "salt": secrets.randbits(128),
         }
 
         proof = self.prover.generate_proof(ProofType.BUDGET_RANGE, inputs)

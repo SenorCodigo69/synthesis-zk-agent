@@ -17,11 +17,14 @@ contract PolicyCommitment {
     /// @notice Mapping from commitment ID to commitment data
     mapping(uint256 => Commitment) public commitments;
 
-    /// @notice Next commitment ID
-    uint256 public nextId;
+    /// @notice Next commitment ID (starts at 1; 0 = no commitment)
+    uint256 public nextId = 1;
 
-    /// @notice Agent ID to active commitment ID mapping
+    /// @notice Agent ID to active commitment ID mapping (0 = none)
     mapping(uint256 => uint256) public activeCommitment;
+
+    /// @notice Agent ID to registered owner (first committer owns the agent ID)
+    mapping(uint256 => address) public agentOwner;
 
     event CommitmentCreated(uint256 indexed id, uint256 indexed agentId, bytes32 policyHash);
     event CommitmentDeactivated(uint256 indexed id, uint256 indexed agentId);
@@ -30,6 +33,16 @@ contract PolicyCommitment {
     /// @param agentId The agent this policy applies to
     /// @param policyHash The Poseidon hash of the policy parameters
     function commitPolicy(uint256 agentId, bytes32 policyHash) external returns (uint256) {
+        require(policyHash != bytes32(0), "Empty policy hash");
+        require(
+            agentOwner[agentId] == address(0) || agentOwner[agentId] == msg.sender,
+            "Not agent owner"
+        );
+
+        if (agentOwner[agentId] == address(0)) {
+            agentOwner[agentId] = msg.sender;
+        }
+
         uint256 id = nextId++;
 
         commitments[id] = Commitment({
@@ -66,7 +79,8 @@ contract PolicyCommitment {
     /// @param agentId The agent ID
     function getActivePolicyHash(uint256 agentId) external view returns (bytes32) {
         uint256 id = activeCommitment[agentId];
-        require(commitments[id].active, "No active commitment");
+        require(id != 0, "No commitment for agent");
+        require(commitments[id].active, "Commitment inactive");
         return commitments[id].policyHash;
     }
 
@@ -75,6 +89,7 @@ contract PolicyCommitment {
     /// @param policyHash The hash to verify
     function verifyCommitment(uint256 agentId, bytes32 policyHash) external view returns (bool) {
         uint256 id = activeCommitment[agentId];
+        if (id == 0) return false;
         return commitments[id].active && commitments[id].policyHash == policyHash;
     }
 }

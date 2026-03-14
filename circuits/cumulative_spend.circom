@@ -36,6 +36,12 @@ template CumulativeSpendProof(n) {
     component limitBits = Num2Bits(n);
     limitBits.in <== periodLimit;
 
+    // Reject zero-amount spends (prevents commitment chain gaming)
+    component amountGt0 = GreaterThan(n);
+    amountGt0.in[0] <== newAmount;
+    amountGt0.in[1] <== 0;
+    amountGt0.out === 1;
+
     // Step 1: Verify previous commitment (chain integrity)
     // previousCommitment == Poseidon(currentTotal, periodLimit, previousSalt)
     component prevHash = Poseidon(3);
