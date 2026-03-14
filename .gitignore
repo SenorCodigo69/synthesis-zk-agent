@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+
+# Node
+node_modules/
+
+# Build artifacts
+build/
+
+# Keys and secrets
+.env
+*.key
+keys/
+
+# Data
+data/
+*.db
+
+# OS
+.DS_Store

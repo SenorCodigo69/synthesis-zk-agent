@@ -1,0 +1,61 @@
+# Synthesis ZK Agent — Default Configuration
+
+agent:
+  id: 1
+  name: "SynthesisZKAgent"
+
+chain:
+  name: "base"
+  chain_id: 8453
+  rpc_url: "https://mainnet.base.org"
+  testnet:
+    name: "base-sepolia"
+    chain_id: 84532
+    rpc_url: "https://sepolia.base.org"
+
+# Spending policy — human-defined constraints
+spending_policy:
+  max_single_spend: 5000        # Max per transaction (USDC)
+  period_limit: 10000           # Max cumulative per period (USDC)
+  period_seconds: 86400         # Period duration (24h)
+  valid_for_seconds: 604800     # Policy validity (7 days)
+
+# Disclosure policies — who can see what
+disclosure:
+  auditor:
+    can_see:
+      - total_monthly_spend
+      - proof_of_solvency
+      - period_count
+    cannot_see:
+      - individual_transactions
+      - protocol_names
+      - exact_balances
+
+  tax_authority:
+    can_see:
+      - total_annual_yield
+      - proof_of_source_legitimacy
+    cannot_see:
+      - individual_positions
+      - protocol_names
+      - daily_balances
+
+  public:
+    can_see:
+      - proof_of_compliance
+    cannot_see:
+      - everything_else
+
+# ZK proof settings
+zk:
+  proof_system: "groth16"
+  proof_timeout_seconds: 30
+  build_dir: "build"
+
+# Safety
+safety:
+  max_total_allocation_pct: 80
+  max_per_protocol_pct: 40
+  min_protocol_tvl: 50000000
+  emergency_withdraw_enabled: true

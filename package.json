@@ -1,0 +1,12 @@
+{
+  "name": "synthesis-zk-agent",
+  "version": "1.0.0",
+  "description": "ZK-authorized private yield agent — Synthesis hackathon",
+  "private": true,
+  "dependencies": {
+    "circomlib": "^2.0.5",
+    "@zk-kit/eddsa-poseidon": "^1.0.0",
+    "poseidon-lite": "^0.3.0",
+    "snarkjs": "^0.7.6"
+  }
+}
