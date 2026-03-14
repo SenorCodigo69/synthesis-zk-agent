@@ -15,13 +15,32 @@ import time
 from src.models import AgentDelegation, PolicyState, ProofType, SpendRecord
 from src.zk.keys import generate_keys, poseidon_hash, sign_message
 
-# Sequential nonce counter (per-process; persisted via database in production)
+# Sequential nonce counter — initialized from DB on first call to avoid
+# reuse across process restarts.
 _nonce_counter = 0
+_nonce_initialized = False
 
 
 def _next_nonce() -> int:
-    """Return a sequential nonce for anti-replay protection."""
-    global _nonce_counter
+    """Return a sequential nonce for anti-replay protection.
+
+    On first call, loads the max nonce from the database to avoid
+    reusing nonces from previous sessions.
+    """
+    global _nonce_counter, _nonce_initialized
+    if not _nonce_initialized:
+        _nonce_initialized = True
+        try:
+            from src.database import Database
+            db = Database()
+            row = db.conn.execute(
+                "SELECT MAX(CAST(nonce AS INTEGER)) as max_nonce FROM delegations"
+            ).fetchone()
+            if row and row["max_nonce"] is not None:
+                _nonce_counter = row["max_nonce"]
+            db.close()
+        except Exception:
+            pass  # Fresh DB or no delegations yet
     _nonce_counter += 1
     return _nonce_counter
 

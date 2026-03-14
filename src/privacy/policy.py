@@ -1,6 +1,7 @@
 """Spending policy management — human-defined constraints with ZK enforcement."""
 from __future__ import annotations
 
+import secrets
 import time
 from typing import Any
 
@@ -73,7 +74,7 @@ class PolicyManager:
         inputs = {
             "amount": amount,
             "maxBudget": state.delegation.spend_limit,
-            "salt": state.delegation.salt,
+            "salt": secrets.randbits(128),
         }
 
         proof = self.prover.generate_proof(ProofType.BUDGET_RANGE, inputs)
@@ -134,7 +135,7 @@ class PolicyManager:
         return {
             "within_limit": verified and within_limit,
             "proof": proof,
-            "new_commitment": proof.public_signals[1] if len(proof.public_signals) > 1 else None,
+            "new_commitment": proof.public_signals[0] if proof.public_signals else None,
             "new_salt": new_salt,
         }
 

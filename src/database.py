@@ -1,13 +1,14 @@
 """SQLite persistence for policy state, proofs, and audit trail.
 
 Sensitive fields (nonce, salt) are encrypted at rest using Fernet
-symmetric encryption derived from the OWNER_PRIVATE_KEY env var.
+symmetric encryption derived from the ZK_DB_ENCRYPTION_KEY env var.
 """
 from __future__ import annotations
 
 import base64
 import hashlib
 import json
+import logging
 import os
 import sqlite3
 import time
@@ -16,11 +17,13 @@ from typing import Any
 
 from cryptography.fernet import Fernet
 
+logger = logging.getLogger(__name__)
+
 
 def _derive_fernet_key(secret: str) -> bytes:
-    """Derive a Fernet key from a secret string."""
-    digest = hashlib.sha256(secret.encode()).digest()
-    return base64.urlsafe_b64encode(digest)
+    """Derive a Fernet key from a secret string using PBKDF2 key stretching."""
+    dk = hashlib.pbkdf2_hmac("sha256", secret.encode(), b"zk-agent-db-v1", 600_000)
+    return base64.urlsafe_b64encode(dk)
 
 
 class Database:
@@ -39,6 +42,10 @@ class Database:
             self._fernet = Fernet(_derive_fernet_key(secret))
         else:
             self._fernet = None
+            logger.warning(
+                "Database encryption DISABLED. Set ZK_DB_ENCRYPTION_KEY env var "
+                "to encrypt nonces and salts at rest."
+            )
 
         self._create_tables()
 

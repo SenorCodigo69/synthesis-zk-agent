@@ -9,6 +9,9 @@ node_modules/
 
 # Build artifacts
 build/
+contracts/out/
+contracts/cache/
+contracts/foundry.lock
 
 # Keys and secrets
 .env

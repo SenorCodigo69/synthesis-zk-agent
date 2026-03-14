@@ -1,47 +1,91 @@
-# Synthesis ZK Agent — Privacy-Preserving Yield Agent
+# Synthesis ZK Agent -- Privacy-Preserving Autonomous Yield Agent
 
-> **Track: "Agents that keep secrets"** — Ethereum Foundation Synthesis Hackathon
+> **Track 2: "Agents that keep secrets"** -- Ethereum Foundation Synthesis Hackathon (March 2026)
 
-An autonomous yield agent that operates **privately** — scanning DeFi protocols for best USDC yield, depositing/withdrawing with ZK-authorized spending proofs, hiding balances and strategy from chain observers, while maintaining selective disclosure for compliance.
+An autonomous DeFi yield agent that operates **privately**. It scans protocols for best USDC yield, deposits and withdraws using ZK-authorized spending proofs, hides balances and strategy from chain observers, and supports selective disclosure for compliance -- all without revealing private data on-chain.
+
+**Stack:** Circom / Groth16 / Baby JubJub EdDSA / snarkjs / Foundry / Base chain / Python
+
+---
 
 ## What It Does
 
-1. **Owner delegates** spending authority to the agent via Baby JubJub EdDSA signature
-2. **Agent proves authorization** via ZK proof — without revealing the owner, limits, or policy
-3. **Agent proves budget compliance** — without revealing the budget or balance
-4. **Agent tracks cumulative spend** — chained ZK commitments, without revealing totals or limits
-5. **Selective disclosure** — auditors see totals (not individual txs), public sees compliance proof only
+Traditional on-chain agents leak everything: balances, strategies, transaction patterns, spending limits. Competitors front-run you. MEV bots extract value. Chain analytics firms profile you.
+
+This agent proves it is authorized and within budget **without revealing any of that data**.
+
+1. **Owner delegates** spending authority via Baby JubJub EdDSA signature
+2. **Agent proves authorization** via ZK proof -- without revealing the owner, limits, or policy
+3. **Agent proves budget compliance** -- without revealing the budget or balance
+4. **Agent tracks cumulative spend** -- chained ZK commitments, without revealing totals
+5. **Selective disclosure** -- auditors see totals (not individual txs), public sees compliance proof only
+
+The human sets the rules. The agent proves compliance. Nobody sees the data.
+
+---
+
+## How It Works
+
+```
+keygen --> delegate --> prove --> execute --> disclose
+```
+
+1. **Keygen** -- Generate a Baby JubJub EdDSA keypair (ZK-friendly elliptic curve). The private key never touches the chain.
+2. **Delegate** -- Owner signs a spending policy (agent ID, spend limit, validity period) with EdDSA. The policy hash is committed on-chain via `PolicyCommitment.sol`; the policy contents stay private.
+3. **Prove** -- Before any action, the agent generates Groth16 ZK proofs:
+   - **Authorization proof**: "I was delegated by a valid owner" (hides owner identity and limits)
+   - **Budget range proof**: "This amount is within my budget" (hides the budget)
+   - **Cumulative spend proof**: "My running total is under the period limit" (hides the limit and history)
+4. **Execute** -- Agent deposits/withdraws from DeFi protocols. On-chain verifier contracts validate the proofs. No private inputs are revealed.
+5. **Disclose** -- Human-defined policies control what each audience sees. Each disclosure generates a purpose-specific ZK proof (e.g., auditor gets total monthly spend without individual transactions).
+
+---
 
 ## Privacy Architecture
 
 ```
-                ┌──────────────────────────────┐
-                │     Private Yield Agent       │
-                │     (AI decision engine)      │
-                └──────────┬───────────────────┘
-                           │
-      ┌────────────────────┼──────────────────────┐
-      │                    │                      │
-┌─────▼──────────┐  ┌─────▼──────────┐  ┌────────▼───────────┐
-│  ZK Proof       │  │  Private       │  │  Disclosure        │
-│  Engine         │  │  Execution     │  │  Controller        │
-└─────┬──────────┘  └─────┬──────────┘  └────────┬───────────┘
-      │                    │                      │
-      ▼                    ▼                      ▼
-Authorization proofs,  ZK-gated deposit/    Human-defined rules
-range proofs, budget   withdraw, paper +    for what to reveal
-compliance proofs      live modes           and to whom
+                +---------------------------------+
+                |     Private Yield Agent          |
+                |     (AI decision engine)         |
+                +---------------+-----------------+
+                                |
+       +------------------------+------------------------+
+       |                        |                        |
++------v---------+  +-----------v--------+  +------------v-----------+
+|  ZK Proof       |  |  Private           |  |  Disclosure            |
+|  Engine         |  |  Execution         |  |  Controller            |
++---------+------+  +----------+---------+  +-------------+----------+
+          |                    |                          |
+          v                    v                          v
+Authorization proofs,  ZK-gated deposit/       Human-defined rules
+range proofs, budget   withdraw, paper +       for what to reveal
+compliance proofs      live modes              and to whom
 ```
+
+---
 
 ## ZK Circuits
 
 | Circuit | What It Proves | What It Hides | Constraints |
 |---|---|---|---|
 | **Authorization** | Agent is delegated by owner | Owner identity, spend limits, validity | ~8,000 |
-| **Budget Range** | Amount ≤ budget | The budget, the amount | ~436 |
-| **Cumulative Spend** | Total spend ≤ period limit | The limit, running total, history | ~849 |
+| **Budget Range** | Amount is within budget | The budget, the amount | ~436 |
+| **Cumulative Spend** | Total spend is within period limit | The limit, running total, history | ~849 |
 
-Built with **Circom 2.2.3** + **snarkjs 0.7.6** (Groth16). Battle-tested stack used by Polygon ID, Semaphore, and Iden3.
+Built with **Circom 2.2.3** + **snarkjs 0.7.6** (Groth16 proving system). Battle-tested stack used by Polygon ID, Semaphore, and Iden3.
+
+---
+
+## On-Chain Contracts
+
+| Contract | Purpose |
+|---|---|
+| `PolicyCommitment.sol` | Stores hashed spending policies on-chain (nothing revealed) |
+| `BudgetRangeVerifier.sol` | Groth16 verifier for budget proofs (exported by snarkjs) |
+| `AuthorizationVerifier.sol` | Groth16 verifier for authorization proofs |
+| `CumulativeSpendVerifier.sol` | Groth16 verifier for cumulative spend proofs |
+
+---
 
 ## Quick Start
 
@@ -60,41 +104,27 @@ bash scripts/setup.sh
 # Run the full demo
 python -m src.main demo
 
-# Run tests (49 tests)
-pytest
+# Run tests (49 Python + 12 Solidity)
+pytest                        # Python tests
+cd contracts && forge test    # Solidity tests
 ```
 
 ## CLI Commands
 
 ```bash
-# Generate owner keys (Baby JubJub EdDSA)
-python -m src.main keygen
+# Set owner key via env var (preferred -- avoids shell history leaks)
+export OWNER_PRIVATE_KEY=<your-bjj-hex-key>
 
-# Create signed delegation
-python -m src.main delegate --owner-key <hex> --spend-limit 5000
-
-# Generate budget range proof
-python -m src.main prove-budget --amount 2000 --budget 5000
-
-# Generate authorization proof
-python -m src.main prove-auth --owner-key <hex> --agent-id 1
-
-# Execute private action (paper mode)
-python -m src.main execute --owner-key <hex> --amount 2000 --protocol aave-v3
-
-# Selective disclosure
-python -m src.main disclose --owner-key <hex> --level auditor
-
-# Agent status
-python -m src.main status
+python -m src.main keygen                                              # Generate Baby JubJub EdDSA keys
+python -m src.main delegate --spend-limit 5000                         # Create signed delegation
+python -m src.main prove-budget --amount 2000 --budget 5000            # Budget range proof
+python -m src.main prove-auth --agent-id 1                             # Authorization proof
+python -m src.main execute --amount 2000 --protocol aave-v3            # Private execution (paper)
+python -m src.main disclose --level auditor                            # Selective disclosure
+python -m src.main status                                              # Agent status
 ```
 
-## On-Chain Artifacts
-
-- **PolicyCommitment.sol** — Stores hashed spending policies on-chain (nothing revealed)
-- **BudgetRangeVerifier.sol** — Groth16 verifier for budget proofs (exported by snarkjs)
-- **AuthorizationVerifier.sol** — Groth16 verifier for authorization proofs
-- **CumulativeSpendVerifier.sol** — Groth16 verifier for cumulative spend proofs
+---
 
 ## Selective Disclosure
 
@@ -111,51 +141,90 @@ disclosure:
     cannot_see: [everything_else]
 ```
 
-Each disclosure generates a purpose-specific ZK proof — the auditor gets a proof that total spend is within limits without seeing individual transactions.
+Each disclosure generates a purpose-specific ZK proof. The auditor gets a proof that total spend is within limits without seeing individual transactions.
+
+---
+
+## Security
+
+Two full security audits completed (2026-03-14). **30 total findings, all actionable findings fixed.**
+
+**Audit v1:** 14 findings (2 CRITICAL, 3 HIGH, 4 MEDIUM, 5 LOW) -- all 14 fixed.
+**Audit v2:** 16 findings (0 CRITICAL, 2 HIGH, 4 MEDIUM, 5 LOW, 5 INFO) -- all 11 actionable findings fixed.
+
+Key fixes: contract access control, budget proof linkability, key handling via env vars, PBKDF2 key stretching, nonce persistence, config path validation, chain ID deployment guard, Solidity test coverage (12 Foundry tests).
+
+See [SECURITY-AUDIT.md](SECURITY-AUDIT.md) for the full report.
+
+---
 
 ## Why This Is NOT a Mixer
 
 | | Tornado Cash | This Project |
 |---|---|---|
-| **Mixing** | Core feature | None — single user, own funds |
-| **P2P** | Shared pool | No P2P — agent's own wallet |
+| **Mixing** | Core feature | None -- single user, own funds |
+| **P2P** | Shared pool | No P2P -- agent's own wallet |
 | **Compliance** | None | Selective disclosure built-in |
 | **Fund commingling** | Yes | No |
 
-## Tech Stack
+EU GDPR recognizes ZK proofs as implementing data minimization (Article 25). This is privacy-preserving technology with disclosure capabilities -- not a mixing service.
 
-- **Python 3.13** — agent logic
-- **Circom 2.2.3** — ZK circuit development
-- **snarkjs 0.7.6** — Groth16 proof generation/verification
-- **Baby JubJub EdDSA** — key management (@zk-kit/eddsa-poseidon)
-- **Poseidon hash** — ZK-friendly hashing (poseidon-lite)
-- **Solidity 0.8.28** — on-chain verifier contracts (Foundry)
-- **SQLite** — local state, audit trail
-- **Base chain** — deployment target (cheapest gas, largest Morpho liquidity)
+---
+
+## Deployment
+
+**Target chain:** Base (cheapest gas, largest Morpho liquidity for USDC yield).
+
+Contracts are compiled and ready for deployment via Foundry. Testnet deployment pending.
+
+```bash
+# Deploy contracts (requires DEPLOYER_PRIVATE_KEY env var and Base RPC)
+python -m src.main deploy --rpc-url <base-rpc-url>
+```
+
+---
 
 ## Project Structure
 
 ```
-├── circuits/              # Circom ZK circuits (3)
-├── contracts/             # Solidity contracts (PolicyCommitment + verifiers)
-├── scripts/               # Compile, setup, keygen, signing helpers
-├── src/
-│   ├── zk/               # Proof engine, keys, commitment scheme
-│   ├── privacy/           # Policy manager, executor, disclosure controller
-│   ├── chain/             # Contract deployment, on-chain verification
-│   ├── main.py            # CLI (7 commands + demo)
-│   └── database.py        # SQLite persistence
-└── tests/                 # 49 tests
+circuits/              # Circom ZK circuits (3)
+contracts/             # Solidity contracts (PolicyCommitment + verifiers)
+scripts/               # Compile, setup, keygen, signing helpers
+src/
+  zk/                  # Proof engine, keys, commitment scheme
+  privacy/             # Policy manager, executor, disclosure controller
+  chain/               # Contract deployment, on-chain verification
+  main.py              # CLI (7 commands + demo)
+  database.py          # SQLite persistence
+tests/                 # 49 tests
 ```
 
-## Declarations
+## Tech Stack
+
+- **Python 3.13** -- agent logic
+- **Circom 2.2.3** -- ZK circuit development
+- **snarkjs 0.7.6** -- Groth16 proof generation and verification
+- **Baby JubJub EdDSA** -- key management (@zk-kit/eddsa-poseidon)
+- **Poseidon hash** -- ZK-friendly hashing (poseidon-lite)
+- **Solidity 0.8.28** -- on-chain verifier contracts
+- **Foundry** -- contract compilation, testing, deployment
+- **Base chain** -- deployment target
+- **SQLite** -- local state, audit trail
+
+---
+
+## Hackathon
 
 | Field | Value |
 |---|---|
+| **Track** | Track 2: "Agents that keep secrets" |
 | **Primary AI model** | `claude-opus-4-6` |
 | **Agent harness** | `claude-code` |
-| **Track** | Track 2: "Agents that keep secrets" |
-| **Conversation log** | See main repo `docs/hackathon/CONVERSATION-LOG.md` |
+| **What we demonstrate** | An autonomous agent that executes DeFi operations with full ZK privacy -- proving authorization and budget compliance without revealing any private data, with human-controlled selective disclosure for compliance |
+| **Conversation log** | See main repo [`docs/hackathon/CONVERSATION-LOG.md`](https://github.com/SenorCodigo69/synthesis-zk-agent) |
+| **Repo** | `github.com/SenorCodigo69/synthesis-zk-agent` (public) |
+
+---
 
 ## License
 

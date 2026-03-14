@@ -22,7 +22,11 @@ def load_config(config_path: str | None = None) -> dict[str, Any]:
     if config_path is None:
         config_path = str(project_root / "config" / "default.yaml")
 
-    with open(config_path) as f:
+    config_file = Path(config_path).resolve()
+    if not str(config_file).startswith(str(project_root.resolve())):
+        raise ValueError(f"Config path must be within project directory: {config_file}")
+
+    with open(config_file) as f:
         config = yaml.safe_load(f)
 
     # Override with env vars

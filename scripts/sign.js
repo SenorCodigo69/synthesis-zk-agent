@@ -10,7 +10,8 @@
  */
 const { derivePublicKey, signMessage } = require("@zk-kit/eddsa-poseidon");
 
-const privateKey = process.argv[2];
+const rawKey = process.argv[2];
+const privateKey = rawKey === "__FROM_ENV__" ? process.env.ZK_SENSITIVE_ARG : rawKey;
 const message = BigInt(process.argv[3]);
 
 if (!privateKey || process.argv[3] === undefined) {

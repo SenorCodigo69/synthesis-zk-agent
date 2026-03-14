@@ -13,7 +13,7 @@ const { derivePublicKey } = require("@zk-kit/eddsa-poseidon");
 const crypto = require("crypto");
 
 const privKeyArg = process.argv[2];
-const privateKey = privKeyArg || crypto.randomBytes(32).toString("hex");
+const privateKey = (privKeyArg === "__FROM_ENV__" ? process.env.ZK_SENSITIVE_ARG : privKeyArg) || crypto.randomBytes(32).toString("hex");
 
 const publicKey = derivePublicKey(privateKey);
 

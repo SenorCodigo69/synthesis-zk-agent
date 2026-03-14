@@ -50,7 +50,9 @@ def keygen():
     click.echo(f"Public Key X (Ax): {keys.public_key_ax}")
     click.echo(f"Public Key Y (Ay): {keys.public_key_ay}")
     click.echo("")
-    click.echo("Save the private key securely. Add to .env as OWNER_PRIVATE_KEY.")
+    click.echo("WARNING: Clear your terminal history after copying this key.")
+    click.echo("         Do not commit or share this key.")
+    click.echo("         Add to .env as OWNER_PRIVATE_KEY.")
 
 
 @cli.command()

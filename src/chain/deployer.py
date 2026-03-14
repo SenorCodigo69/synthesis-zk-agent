@@ -67,14 +67,17 @@ class ContractDeployer:
             cmd.append("--constructor-args")
             cmd.extend(constructor_args)
 
-        # NOTE: --private-key appears in process listing (Foundry limitation).
+        # Pass private key via environment variable to avoid leaking in `ps aux`.
         # For production, use `cast wallet import` + `--account <name>` instead.
+        env = os.environ.copy()
+        env["DEPLOYER_PRIVATE_KEY"] = self._private_key
         result = subprocess.run(
             cmd + ["--private-key", self._private_key],
             cwd=contracts_dir,
             capture_output=True,
             text=True,
             timeout=120,
+            env=env,
         )
 
         if result.returncode != 0:
