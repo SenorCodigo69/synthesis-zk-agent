@@ -100,8 +100,11 @@ class PrivateExecutor:
         result["updated_state"] = {
             "cumulative_total": updated_state.cumulative_total,
             "commitment": updated_state.current_commitment,
+            "current_salt": updated_state.current_salt,
             "spend_count": len(updated_state.spend_history),
         }
+        # Expose full state for callers that need to chain actions
+        result["_policy_state"] = updated_state
 
         # Step 4: Collect proof data
         result["proofs"] = {

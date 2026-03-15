@@ -391,5 +391,119 @@ def demo(ctx):
     click.echo("=" * 60)
 
 
+@cli.command(name="private-yield")
+@click.option("--owner-key", default=None, help="Owner's BJJ private key (prefer OWNER_PRIVATE_KEY env var)")
+@click.option("--capital", default=10000, type=float, help="Total capital in USD")
+@click.option("--mode", type=click.Choice(["paper", "dry_run"]), default="paper")
+@click.pass_context
+def private_yield(ctx, owner_key, capital, mode):
+    """Execute a private yield allocation — yield strategy + ZK proof gates."""
+    import subprocess
+    import sys
+
+    owner_key = _get_owner_key(owner_key)
+    config = ctx.obj["config"]
+    prover = ZKProver(config["zk"]["build_dir"])
+    policy_mgr = PolicyManager(prover, config)
+    exec_mode = ExecutionMode.PAPER if mode == "paper" else ExecutionMode.DRY_RUN
+
+    click.echo("=" * 60)
+    click.echo("  PRIVATE YIELD AGENT")
+    click.echo("  Yield strategy + ZK privacy layer")
+    click.echo("=" * 60)
+
+    # Step 1: Get yield allocation plan from yield agent
+    click.echo("\n--- Step 1: Fetch yield allocation plan ---")
+    yield_agent_dir = os.path.expanduser("~/Desktop/claude_projects/synthesis-yield-agent")
+    yield_python = os.path.join(yield_agent_dir, ".venv", "bin", "python")
+    if not os.path.exists(yield_python):
+        yield_python = sys.executable  # Fallback
+    try:
+        result = subprocess.run(
+            [yield_python, "-m", "src", "allocate", "--json-output", "--capital", str(capital)],
+            capture_output=True, text=True, timeout=60,
+            cwd=yield_agent_dir,
+        )
+        if result.returncode != 0:
+            click.echo(f"Yield agent error: {result.stderr}")
+            return
+        plan_data = json.loads(result.stdout)
+    except FileNotFoundError:
+        click.echo("Yield agent not found — using sample allocation plan")
+        plan_data = {
+            "capital_usd": capital,
+            "allocations": [
+                {"protocol": "aave-v3", "amount_usd": capital * 0.4, "target_pct": 0.4},
+                {"protocol": "morpho-v1", "amount_usd": capital * 0.4, "target_pct": 0.4},
+            ],
+        }
+    except Exception as e:
+        click.echo(f"Failed to fetch yield plan: {e} — using sample allocation")
+        plan_data = {
+            "capital_usd": capital,
+            "allocations": [
+                {"protocol": "aave-v3", "amount_usd": capital * 0.4, "target_pct": 0.4},
+                {"protocol": "morpho-v1", "amount_usd": capital * 0.4, "target_pct": 0.4},
+            ],
+        }
+
+    allocs = plan_data.get("allocations", [])
+    click.echo(f"Yield plan: {len(allocs)} allocations, ${plan_data.get('allocated_usd', capital * 0.8):,.0f} allocated")
+    for a in allocs:
+        click.echo(f"  {a['protocol']:<15} ${a['amount_usd']:>10,.2f}  ({a['target_pct']:.1%})")
+
+    # Step 2: Create delegation + policy state
+    click.echo("\n--- Step 2: Create ZK delegation ---")
+    delegation = create_delegation(
+        owner_private_key=owner_key,
+        agent_id=config["agent"]["id"],
+        spend_limit=config["spending_policy"]["max_single_spend"],
+        valid_for_seconds=config["spending_policy"]["valid_for_seconds"],
+    )
+    state = initialize_policy_state(delegation, config["spending_policy"]["period_limit"])
+    click.echo(f"Agent {delegation.agent_id} delegated, spend limit: {delegation.spend_limit} USDC")
+    click.echo(f"Policy commitment: {delegation.policy_commitment[:30]}...")
+
+    # Step 3: Execute with ZK proof gates
+    click.echo("\n--- Step 3: Execute with ZK privacy ---")
+    from src.bridge.private_yield import PrivateYieldExecutor, actions_from_yield_plan
+
+    bridge = PrivateYieldExecutor(prover, policy_mgr, state, exec_mode)
+    actions = actions_from_yield_plan(plan_data)
+    results = bridge.execute_yield_actions(actions)
+
+    for r in results:
+        status_icon = {"SIMULATED": "+", "DRY_RUN": "~", "REJECTED": "X", "SKIPPED": "-"}.get(r["status"], "?")
+        zk_label = "ZK OK" if r["zk_compliant"] else "ZK FAIL"
+        click.echo(
+            f"  [{status_icon}] {r['action']:<10} {r['protocol']:<15} "
+            f"${r['amount_usd']:>10,.2f}  [{zk_label}]  {r['status']}"
+        )
+        if r["status"] == "REJECTED":
+            click.echo(f"       Reason: {r['reason']}")
+
+    # Step 4: Summary
+    summary = bridge.get_summary()
+    click.echo(f"\n--- Summary ---")
+    click.echo(f"  Actions:    {summary['total_actions']} total, {summary['executed']} executed, {summary['rejected']} rejected")
+    click.echo(f"  Total USD:  ${summary['total_usd']:,.2f}")
+    click.echo(f"  ZK proofs:  {summary['proof_count']} generated")
+    click.echo(f"  Cumulative: {summary['cumulative_total']} / {summary['period_limit']} USDC period limit")
+
+    # Step 5: Selective disclosure preview
+    click.echo(f"\n--- Disclosure Preview ---")
+    controller = DisclosureController(prover, config)
+    disc = controller.get_disclosure_summary(state, DisclosureLevel.AUDITOR)
+    click.echo(f"  Auditor view: {', '.join(disc['allowed_claims'])}")
+    click.echo(f"  Public view:  proof_of_compliance only")
+    click.echo(f"  Hidden:       individual transactions, protocol names, exact balances")
+
+    click.echo("\n" + "=" * 60)
+    click.echo("  PRIVATE YIELD COMPLETE")
+    click.echo(f"  Yield agent chose the strategy. ZK agent proved compliance.")
+    click.echo(f"  Nobody sees the data.")
+    click.echo("=" * 60)
+
+
 if __name__ == "__main__":
     cli()
