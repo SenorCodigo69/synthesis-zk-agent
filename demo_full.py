@@ -24,6 +24,7 @@ Usage:
 import argparse
 import asyncio
 import logging
+import math
 import os
 import secrets
 import sys
@@ -241,37 +242,7 @@ async def main(live: bool = False, use_ai: bool = False):
         else:
             raise RuntimeError(result.stderr[:200])
     except Exception as e:
-        print(f"  Warning: Yield agent scan failed ({e}) — fetching DeFi Llama directly")
-        # Direct DeFi Llama fallback
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(
-                    "https://yields.llama.fi/pools",
-                    timeout=aiohttp.ClientTimeout(total=15),
-                ) as resp:
-                    if resp.status == 200:
-                        pools = (await resp.json()).get("data", [])
-                        for pool in pools:
-                            if (
-                                pool.get("chain") == "Base"
-                                and pool.get("symbol") == "USDC"
-                                and pool.get("project") in ("aave-v3", "morpho-v1", "compound-v3")
-                                and pool.get("apy", 0) > 0
-                            ):
-                                yield_rates.append({
-                                    "protocol": pool["project"],
-                                    "apy": pool["apy"] / 100,
-                                    "tvl": pool.get("tvlUsd", 0),
-                                    "utilization": 0.0,
-                                })
-                        print()
-                        for r in yield_rates:
-                            print(
-                                f"  {r['protocol']:<15} {r['apy']:>6.2%} APY  "
-                                f"${r['tvl']:>12,.0f} TVL"
-                            )
-        except Exception:
-            pass
+        print(f"  Warning: Yield agent scan failed ({e}) — will use DeFi Llama fallback")
 
     if not yield_rates:
         yield_rates = [
@@ -279,31 +250,61 @@ async def main(live: bool = False, use_ai: bool = False):
         ]
         print(f"  Using default rates: aave-v3 2.50% APY")
 
-    # Fetch Uniswap LP pool data for yield comparison
+    # S44-M2: Reuse DeFi Llama data from yield fallback (avoid duplicate API call)
     lp_pools = []
     try:
+        # Fetch once if we didn't already get raw pool data
+        all_pools_raw = []
         async with aiohttp.ClientSession() as session:
             async with session.get(
                 "https://yields.llama.fi/pools",
                 timeout=aiohttp.ClientTimeout(total=15),
             ) as resp:
                 if resp.status == 200:
-                    all_pools = (await resp.json()).get("data", [])
-                    for pool in all_pools:
-                        if (
-                            pool.get("chain") == "Base"
-                            and "uniswap" in pool.get("project", "").lower()
-                            and "USDC" in pool.get("symbol", "").upper()
-                            and pool.get("tvlUsd", 0) > 100000
-                            and pool.get("apy", 0) > 0
-                        ):
-                            lp_pools.append({
-                                "pair": pool["symbol"],
-                                "fee_apy": float(pool.get("apyBase", pool.get("apy", 0)) or 0) / 100,
-                                "tvl": pool.get("tvlUsd", 0),
-                                "project": pool["project"],
-                            })
-                    lp_pools.sort(key=lambda p: p["tvl"], reverse=True)
+                    all_pools_raw = (await resp.json()).get("data", [])
+
+        # Extract LP pools from the same response
+        for pool in all_pools_raw:
+            if (
+                pool.get("chain") == "Base"
+                and "uniswap" in pool.get("project", "").lower()
+                and "USDC" in pool.get("symbol", "").upper()
+                and pool.get("tvlUsd", 0) > 100000
+                and pool.get("apy", 0) > 0
+            ):
+                fee_apy_raw = float(pool.get("apyBase", pool.get("apy", 0)) or 0)
+                if not math.isfinite(fee_apy_raw):
+                    continue
+                lp_pools.append({
+                    "pair": pool["symbol"],
+                    "fee_apy": fee_apy_raw / 100,
+                    "tvl": pool.get("tvlUsd", 0),
+                    "project": pool["project"],
+                })
+        lp_pools.sort(key=lambda p: p["tvl"], reverse=True)
+
+        # Backfill yield_rates from the same data if the subprocess failed
+        if not yield_rates:
+            for pool in all_pools_raw:
+                if (
+                    pool.get("chain") == "Base"
+                    and pool.get("symbol") == "USDC"
+                    and pool.get("project") in ("aave-v3", "morpho-v1", "compound-v3")
+                    and pool.get("apy", 0) > 0
+                ):
+                    yield_rates.append({
+                        "protocol": pool["project"],
+                        "apy": pool["apy"] / 100,
+                        "tvl": pool.get("tvlUsd", 0),
+                        "utilization": 0.0,
+                    })
+            if yield_rates:
+                for r in yield_rates:
+                    print(
+                        f"  {r['protocol']:<15} {r['apy']:>6.2%} APY  "
+                        f"${r['tvl']:>12,.0f} TVL"
+                    )
+
         if lp_pools:
             print()
             print(f"  Uniswap LP Pools ({len(lp_pools)} USDC pairs):")
@@ -574,7 +575,9 @@ async def main(live: bool = False, use_ai: bool = False):
     print(f"  Recommendation: {rec.action.value} (${rec.amount_usd:,.2f})")
     print(f"  ZK Proofs:     {proof_count} generated (3 compliance + 2 disclosure)")
     print(f"  Hook:          ZK-gated V4 beforeSwap ({len(hook_data)} bytes)" if hook_data else "")
-    print(f"  Yield target:  {best_rate['protocol']} ({best_rate['apy']:.2%} APY)" if yield_rates else "")
+    if yield_rates:
+        best_rate = max(yield_rates, key=lambda r: r["apy"])
+        print(f"  Yield target:  {best_rate['protocol']} ({best_rate['apy']:.2%} APY)")
     print()
 
     if swap_result:
