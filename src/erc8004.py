@@ -137,12 +137,16 @@ async def register_agent(
             "gas": 500_000,
         })
 
-        # Estimate gas
+        # Estimate gas — if this fails, the tx would likely revert on-chain
         try:
             estimated = await w3.eth.estimate_gas(tx)
             tx["gas"] = int(estimated * 1.2)
-        except Exception:
-            pass  # Use fallback 500k
+        except Exception as e:
+            logger.warning(
+                f"Gas estimation failed (tx may revert): {e}. "
+                f"Aborting to avoid wasting gas."
+            )
+            return None
 
         # Sign and send
         signed = w3.eth.account.sign_transaction(tx, private_key=private_key)

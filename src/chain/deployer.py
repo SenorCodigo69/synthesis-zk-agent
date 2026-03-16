@@ -67,12 +67,13 @@ class ContractDeployer:
             cmd.append("--constructor-args")
             cmd.extend(constructor_args)
 
-        # Pass private key via environment variable to avoid leaking in `ps aux`.
+        # Pass private key via PRIVATE_KEY env var — forge reads it automatically.
+        # Never pass via --private-key CLI arg (visible in ps aux).
         # For production, use `cast wallet import` + `--account <name>` instead.
         env = os.environ.copy()
-        env["DEPLOYER_PRIVATE_KEY"] = self._private_key
+        env["PRIVATE_KEY"] = self._private_key
         result = subprocess.run(
-            cmd + ["--private-key", self._private_key],
+            cmd,
             cwd=contracts_dir,
             capture_output=True,
             text=True,

@@ -82,9 +82,13 @@ def poseidon_hash(inputs: list[str | int]) -> str:
     Returns:
         Hash value as string.
     """
+    import os
     str_inputs = [str(x) for x in inputs]
-    cmd = ["node", str(SCRIPTS_DIR / "poseidon_hash.js")] + str_inputs
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    # Pass inputs via env var to avoid leaking ZK pre-images in ps aux
+    env = os.environ.copy()
+    env["ZK_HASH_INPUTS"] = json.dumps(str_inputs)
+    cmd = ["node", str(SCRIPTS_DIR / "poseidon_hash.js"), "--from-env"]
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, env=env)
     if result.returncode != 0:
         raise RuntimeError(f"Poseidon hash failed: {result.stderr}")
     return result.stdout.strip()

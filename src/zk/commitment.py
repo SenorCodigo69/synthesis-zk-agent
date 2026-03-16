@@ -16,33 +16,39 @@ from src.models import AgentDelegation, PolicyState, ProofType, SpendRecord
 from src.zk.keys import generate_keys, poseidon_hash, sign_message
 
 # Sequential nonce counter — initialized from DB on first call to avoid
-# reuse across process restarts.
+# reuse across process restarts. Thread-safe via lock.
+import threading
+
 _nonce_counter = 0
 _nonce_initialized = False
+_nonce_lock = threading.Lock()
 
 
 def _next_nonce() -> int:
     """Return a sequential nonce for anti-replay protection.
 
     On first call, loads the max nonce from the database to avoid
-    reusing nonces from previous sessions.
+    reusing nonces from previous sessions. Thread-safe.
     """
     global _nonce_counter, _nonce_initialized
-    if not _nonce_initialized:
-        _nonce_initialized = True
-        try:
-            from src.database import Database
-            db = Database()
-            row = db.conn.execute(
-                "SELECT MAX(CAST(nonce AS INTEGER)) as max_nonce FROM delegations"
-            ).fetchone()
-            if row and row["max_nonce"] is not None:
-                _nonce_counter = row["max_nonce"]
-            db.close()
-        except Exception:
-            pass  # Fresh DB or no delegations yet
-    _nonce_counter += 1
-    return _nonce_counter
+    with _nonce_lock:
+        if not _nonce_initialized:
+            _nonce_initialized = True
+            try:
+                from src.database import Database
+                db = Database()
+                # Decrypt nonces in Python since they may be Fernet-encrypted
+                rows = db.conn.execute("SELECT nonce FROM delegations").fetchall()
+                if rows:
+                    max_nonce = max(
+                        int(db._decrypt(row["nonce"])) for row in rows
+                    )
+                    _nonce_counter = max_nonce
+                db.close()
+            except Exception:
+                pass  # Fresh DB or no delegations yet
+        _nonce_counter += 1
+        return _nonce_counter
 
 
 def create_delegation(

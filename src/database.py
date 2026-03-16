@@ -20,9 +20,16 @@ from cryptography.fernet import Fernet
 logger = logging.getLogger(__name__)
 
 
-def _derive_fernet_key(secret: str) -> bytes:
-    """Derive a Fernet key from a secret string using PBKDF2 key stretching."""
-    dk = hashlib.pbkdf2_hmac("sha256", secret.encode(), b"zk-agent-db-v1", 600_000)
+def _derive_fernet_key(secret: str, db_path: str = "") -> bytes:
+    """Derive a Fernet key from a secret string using PBKDF2 key stretching.
+
+    Uses a per-database salt derived from the db path to prevent
+    cross-database attacks when the same password is reused.
+    """
+    # Per-database salt: hash of absolute path ensures uniqueness
+    path_bytes = Path(db_path).resolve().as_posix().encode() if db_path else b""
+    salt = hashlib.sha256(b"zk-agent-db-v1" + path_bytes).digest()[:16]
+    dk = hashlib.pbkdf2_hmac("sha256", secret.encode(), salt, 600_000)
     return base64.urlsafe_b64encode(dk)
 
 
@@ -31,7 +38,7 @@ class Database:
 
     def __init__(self, db_path: str = "data/zk_agent.db", encryption_key: str | None = None):
         self.db_path = db_path
-        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(db_path).parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.conn = sqlite3.connect(db_path)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
@@ -39,7 +46,7 @@ class Database:
         # Encryption for sensitive fields
         secret = encryption_key or os.environ.get("ZK_DB_ENCRYPTION_KEY", "")
         if secret:
-            self._fernet = Fernet(_derive_fernet_key(secret))
+            self._fernet = Fernet(_derive_fernet_key(secret, db_path))
         else:
             self._fernet = None
             logger.warning(
@@ -61,7 +68,11 @@ class Database:
             try:
                 return self._fernet.decrypt(value.encode()).decode()
             except Exception:
-                return value  # Already plaintext (migrated data)
+                # Distinguish legacy plaintext (numeric) from actual decrypt failures
+                if value.isdigit() or (value.startswith("-") and value[1:].isdigit()):
+                    return value  # Legacy plaintext (pre-encryption data)
+                logger.warning("Decryption failed — possible wrong key or corrupted data")
+                return value
         return value
 
     def _create_tables(self) -> None:

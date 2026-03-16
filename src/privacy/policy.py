@@ -102,8 +102,10 @@ class PolicyManager:
         import secrets
         from src.zk.keys import poseidon_hash
 
-        # Auto-reset if period expired
+        # Auto-reset if period expired (deep copy to avoid mutating caller's state)
         if time.time() - state.period_start > self.period_seconds:
+            import copy
+            state = copy.deepcopy(state)
             state.cumulative_total = 0
             state.period_start = time.time()
             state.current_salt = secrets.randbits(128)

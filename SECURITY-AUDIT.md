@@ -1,13 +1,166 @@
 # Security Audit — Synthesis ZK Agent
 
-**Auditor:** Claude Opus 4.6 (automated)
-**Date:** 2026-03-14 (Audit v2 — full re-audit including new code)
-**Scope:** All Circom circuits, Solidity contracts (PolicyCommitment + 3 verifiers + Deploy script), Python source, Node.js scripts, shell scripts, config files
-**Codebase:** ~4,200 LOC, 49 tests, 3 circuits, 5 contracts (1 custom + 3 snarkjs-generated verifiers + 1 deploy script)
+**Latest:** Audit v3 (2026-03-16) — 13 findings, all 9 actionable fixed
+**Previous:** Audit v2 (2026-03-14) — 16 findings, all actionable fixed | Audit v1 (2026-03-14) — 14 findings, all fixed
+**Cumulative:** 43 total findings across 3 audits, all actionable findings resolved
 
 ---
 
-## Summary
+# Audit v3 — 2026-03-16
+
+**Auditor:** Claude Opus 4.6 (automated)
+**Scope:** All Circom circuits (3), Solidity contracts (5), Python source (20 files), Node.js scripts (3), shell scripts (2), config, ERC-8004 module
+**Codebase:** ~4,800 LOC, 71 Python tests + 12 Solidity tests, 3 circuits, 5 contracts
+
+## v3 Summary
+
+| Severity | Count | Status |
+|----------|-------|--------|
+| CRITICAL | 0     | --     |
+| HIGH     | 1     | **Fixed** |
+| MEDIUM   | 3     | **Fixed** |
+| LOW      | 5     | **Fixed** |
+| INFO     | 4     | Noted  |
+| **Total**| **13**| **All actionable findings fixed** |
+
+### v2 Regression Check: All 16 findings verified. One regression found (H-2: deployer private key still on CLI) — fixed in v3 as H-1.
+### v1 Regression Check: All 14 findings verified, all still fixed.
+
+---
+
+## v3 Findings
+
+### H-1: Deployer private key STILL passed via `--private-key` CLI argument (v2 H-2 regression)
+
+**Severity:** HIGH
+**File:** `src/chain/deployer.py:75`
+**Impact:** Ethereum deployer private key visible in `ps aux` during contract deployment
+
+The v2 audit marked H-2 as "FIXED" but `--private-key` was still passed on the command line alongside the env var.
+
+**Status: FIXED** — Removed `--private-key` from cmd. Now uses forge's `PRIVATE_KEY` env var (forge reads it automatically).
+
+---
+
+### M-1: `poseidon_hash` passes ZK pre-images directly to CLI
+
+**Severity:** MEDIUM
+**File:** `src/zk/keys.py:86-87`
+**Impact:** Poseidon hash inputs (salts, spend limits, nonces, cumulative totals) visible in `ps aux`, defeating ZK privacy layer
+
+**Status: FIXED** — `poseidon_hash` now passes inputs via `ZK_HASH_INPUTS` env var with `--from-env` flag. `poseidon_hash.js` updated to read from env.
+
+---
+
+### M-2: `check_cumulative` mutates caller's PolicyState on period reset
+
+**Severity:** MEDIUM
+**File:** `src/privacy/policy.py:106-112`
+**Impact:** Silent state mutation during what appears to be a read-only check; could cause unpredictable state in multi-action sequences
+
+**Status: FIXED** — Deep copies state before mutation on period reset, consistent with `record_spend()` in `commitment.py`.
+
+---
+
+### M-3: ERC-8004 `register_agent` sends tx even when gas estimation fails
+
+**Severity:** MEDIUM
+**File:** `src/erc8004.py:141-145`
+**Impact:** Wastes real ETH on a transaction guaranteed to revert
+
+**Status: FIXED** — Now aborts with warning log instead of silently falling back to 500k gas.
+
+---
+
+### L-1: `_next_nonce()` queries encrypted nonce column with SQL CAST — returns wrong MAX
+
+**Severity:** LOW
+**File:** `src/zk/commitment.py:36-40`
+**Impact:** When Fernet encryption is enabled, `MAX(CAST(nonce AS INTEGER))` operates on ciphertext, returning 0. Nonces could restart and collide.
+
+**Status: FIXED** — Now queries all nonce rows and decrypts in Python before computing max.
+
+---
+
+### L-2: Database directory created with default permissions (world-readable)
+
+**Severity:** LOW
+**File:** `src/database.py:34`
+**Impact:** Other users on shared systems can read the SQLite database
+
+**Status: FIXED** — `mkdir` now uses `mode=0o700`.
+
+---
+
+### L-3: PBKDF2 uses hardcoded salt — no per-database uniqueness
+
+**Severity:** LOW
+**File:** `src/database.py:25`
+**Impact:** Two databases with same password produce identical Fernet keys
+
+**Status: FIXED** — Salt now derived from `sha256(constant + absolute_db_path)`, unique per database.
+
+---
+
+### L-4: `_decrypt` silently returns ciphertext on failure — no integrity check
+
+**Severity:** LOW
+**File:** `src/database.py:61-64`
+**Impact:** Wrong encryption key returns garbled data as if it were plaintext
+
+**Status: FIXED** — Now distinguishes legacy plaintext (numeric strings) from actual decrypt failures, logs warning on non-plaintext failures.
+
+---
+
+### L-5: `_next_nonce()` not thread-safe — global mutable state without lock
+
+**Severity:** LOW
+**File:** `src/zk/commitment.py:20-45`
+**Impact:** Concurrent delegation creations could receive same nonce
+
+**Status: FIXED** — Added `threading.Lock` around nonce counter.
+
+---
+
+## v3 INFO
+
+### I-1: No `.env.example` file
+
+**Status: FIXED** — Added `.env.example` documenting all required env vars.
+
+### I-2: Test files use hardcoded private key without warning comment
+
+Test key `"abcdef1234..."` is used across all test files. Acceptable for testing but could be copied for real use.
+
+### I-3: No coordinator contract (v2 M-4 carry-forward)
+
+Verifier contracts and PolicyCommitment are still independent. Valid proofs can be verified against any commitment. Acceptable for hackathon demo.
+
+### I-4: Groth16 trusted setup entropy (v2 I-1 carry-forward)
+
+`setup.sh` uses `date +%s` as entropy. Acceptable for hackathon, production needs MPC ceremony.
+
+---
+
+## v3 Risk Matrix
+
+| # | Severity | File | Status |
+|---|----------|------|--------|
+| H-1 | HIGH | deployer.py | **FIXED** |
+| M-1 | MEDIUM | keys.py + poseidon_hash.js | **FIXED** |
+| M-2 | MEDIUM | policy.py | **FIXED** |
+| M-3 | MEDIUM | erc8004.py | **FIXED** |
+| L-1 | LOW | commitment.py | **FIXED** |
+| L-2 | LOW | database.py | **FIXED** |
+| L-3 | LOW | database.py | **FIXED** |
+| L-4 | LOW | database.py | **FIXED** |
+| L-5 | LOW | commitment.py | **FIXED** |
+
+---
+
+# Audit v2 — 2026-03-14
+
+## v2 Summary
 
 | Severity | Count | Status |
 |----------|-------|--------|

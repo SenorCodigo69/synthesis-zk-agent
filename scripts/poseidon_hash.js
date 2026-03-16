@@ -9,7 +9,17 @@
  */
 const { poseidon2, poseidon3, poseidon4, poseidon5, poseidon6 } = require("poseidon-lite");
 
-const inputs = process.argv.slice(2).map(BigInt);
+// Inputs can come from CLI args or ZK_HASH_INPUTS env var (avoids leaking in ps aux)
+let rawInputs = process.argv.slice(2);
+if (rawInputs.length === 1 && rawInputs[0] === "--from-env") {
+    const envInputs = process.env.ZK_HASH_INPUTS;
+    if (!envInputs) {
+        console.error("--from-env requires ZK_HASH_INPUTS env var");
+        process.exit(1);
+    }
+    rawInputs = JSON.parse(envInputs);
+}
+const inputs = rawInputs.map(BigInt);
 
 if (inputs.length === 0) {
     console.error("Usage: node poseidon_hash.js <input1> <input2> ...");
