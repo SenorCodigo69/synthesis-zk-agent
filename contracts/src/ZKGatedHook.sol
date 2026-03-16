@@ -14,7 +14,7 @@ import {IAuthorizationVerifier} from "./IAuthorizationVerifier.sol";
 /// @notice Only agents with valid Groth16 ZK authorization proofs can swap through pools using this hook.
 ///         Combines Uniswap V4 Hooks with privacy-preserving access control.
 ///         The hook calls an on-chain AuthorizationVerifier to validate proofs.
-///         Once verified, an address is cached as authorized to avoid re-proving on every swap.
+///         Once verified, an address is cached (with TTL) to avoid re-proving on every swap.
 /// @dev Deployed via CREATE2 with address flags encoding BEFORE_SWAP_FLAG (bit 7).
 contract ZKGatedHook is IHooks {
     // ──────────────────────────────────────────────────────────────
@@ -25,13 +25,24 @@ contract ZKGatedHook is IHooks {
     error NotAuthorized();
     error InvalidProof();
     error ZeroAddress();
+    error ProofAlreadyUsed();
+    error AgentBindingMismatch();
+    error PreAuthDisabled();
 
     // ──────────────────────────────────────────────────────────────
     // Events
     // ──────────────────────────────────────────────────────────────
     event AgentAuthorized(address indexed agent, uint256 indexed agentId, uint256 indexed policyCommitment);
     event AgentRevoked(address indexed agent);
-    event SwapGated(address indexed sender, bool authorized);
+    event AgentBound(uint256 indexed agentId, address indexed agent);
+    event PreAuthPermanentlyDisabled();
+
+    // ──────────────────────────────────────────────────────────────
+    // Constants
+    // ──────────────────────────────────────────────────────────────
+
+    /// @notice Authorization cache TTL (24 hours)
+    uint256 public constant AUTH_TTL = 24 hours;
 
     // ──────────────────────────────────────────────────────────────
     // State
@@ -46,11 +57,21 @@ contract ZKGatedHook is IHooks {
     /// @notice Hook owner (can revoke authorizations)
     address public immutable owner;
 
-    /// @notice Mapping of authorized addresses (cached after first ZK proof)
-    mapping(address => bool) public authorized;
+    /// @notice Authorization expiry timestamp per address (SEC-H02 fix)
+    mapping(address => uint256) public authorizedUntil;
 
-    /// @notice Total number of unique authorized agents
+    /// @notice Proof nullifier — each proof hash can only be used once (SEC-H01 fix)
+    mapping(bytes32 => bool) public usedProofHashes;
+
+    /// @notice Agent ID to Ethereum address binding (SEC-H01 fix)
+    /// @dev If set, only the bound address can use proofs for that agentId
+    mapping(uint256 => address) public agentBinding;
+
+    /// @notice Total number of currently authorized agents
     uint256 public authorizedCount;
+
+    /// @notice Whether preAuthorize is permanently disabled (SEC-M01 fix)
+    bool public preAuthDisabled;
 
     // ──────────────────────────────────────────────────────────────
     // Constructor
@@ -65,7 +86,7 @@ contract ZKGatedHook is IHooks {
         verifier = _verifier;
         owner = _owner;
 
-        // Validate hook address flags — the address must have BEFORE_SWAP_FLAG set
+        // Validate hook address flags
         Hooks.validateHookPermissions(IHooks(address(this)), getHookPermissions());
     }
 
@@ -97,9 +118,9 @@ contract ZKGatedHook is IHooks {
     // ──────────────────────────────────────────────────────────────
 
     /// @notice Called by PoolManager before every swap. Verifies ZK authorization.
-    /// @dev If sender is already authorized (cached), allows immediately.
+    /// @dev If sender has a non-expired cached authorization, allows immediately.
     ///      Otherwise, decodes a Groth16 proof from hookData and verifies on-chain.
-    ///      Proof format in hookData: abi.encode(uint256[2] pA, uint256[2][2] pB, uint256[2] pC, uint256[2] pubSignals)
+    ///      Each proof can only be used once (nullifier). Agent ID must be bound to sender if binding exists.
     function beforeSwap(
         address sender,
         PoolKey calldata, /* key */
@@ -108,13 +129,25 @@ contract ZKGatedHook is IHooks {
     ) external override returns (bytes4, BeforeSwapDelta, uint24) {
         if (msg.sender != address(poolManager)) revert OnlyPoolManager();
 
-        if (authorized[sender]) {
-            emit SwapGated(sender, true);
+        // Check cached authorization (with TTL)
+        if (block.timestamp < authorizedUntil[sender]) {
             return (IHooks.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
         }
 
-        // Decode ZK proof from hookData
+        // No valid cache — verify proof
+        _verifyAndAuthorize(sender, hookData);
+
+        return (IHooks.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
+    }
+
+    /// @dev Internal: decode, nullify, bind-check, verify, and cache authorization.
+    function _verifyAndAuthorize(address sender, bytes calldata hookData) internal {
         if (hookData.length == 0) revert NotAuthorized();
+
+        // Proof nullifier — prevent replay (SEC-H01)
+        bytes32 proofHash = keccak256(hookData);
+        if (usedProofHashes[proofHash]) revert ProofAlreadyUsed();
+        usedProofHashes[proofHash] = true;
 
         (
             uint256[2] memory pA,
@@ -123,18 +156,32 @@ contract ZKGatedHook is IHooks {
             uint256[2] memory pubSignals
         ) = abi.decode(hookData, (uint256[2], uint256[2][2], uint256[2], uint256[2]));
 
-        // Verify Groth16 proof on-chain
-        bool valid = verifier.verifyProof(pA, pB, pC, pubSignals);
-        if (!valid) revert InvalidProof();
+        // Agent binding check — if agentId is bound, sender must match (SEC-H01)
+        address boundAddr = agentBinding[pubSignals[0]];
+        if (boundAddr != address(0) && boundAddr != sender) revert AgentBindingMismatch();
 
-        // Cache authorization
-        authorized[sender] = true;
+        // Verify Groth16 proof on-chain
+        if (!verifier.verifyProof(pA, pB, pC, pubSignals)) revert InvalidProof();
+
+        // Cache authorization with TTL (SEC-H02)
+        authorizedUntil[sender] = block.timestamp + AUTH_TTL;
         authorizedCount++;
 
         emit AgentAuthorized(sender, pubSignals[0], pubSignals[1]);
-        emit SwapGated(sender, true);
+    }
 
-        return (IHooks.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
+    // ──────────────────────────────────────────────────────────────
+    // Admin: Agent binding
+    // ──────────────────────────────────────────────────────────────
+
+    /// @notice Bind an agent ID to a specific Ethereum address (owner only)
+    /// @dev Once bound, only that address can use proofs for this agentId
+    /// @param agentId The agent ID from the ZK proof
+    /// @param agent The Ethereum address to bind
+    function bindAgent(uint256 agentId, address agent) external {
+        require(msg.sender == owner, "Not owner");
+        agentBinding[agentId] = agent;
+        emit AgentBound(agentId, agent);
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -145,25 +192,42 @@ contract ZKGatedHook is IHooks {
     /// @param agent The address to revoke
     function revokeAuthorization(address agent) external {
         require(msg.sender == owner, "Not owner");
-        require(authorized[agent], "Not authorized");
-        authorized[agent] = false;
+        require(authorizedUntil[agent] > block.timestamp, "Not authorized");
+        authorizedUntil[agent] = 0;
         authorizedCount--;
         emit AgentRevoked(agent);
     }
 
     // ──────────────────────────────────────────────────────────────
-    // Pre-authorize (owner can whitelist without proof for testing)
+    // Pre-authorize (can be permanently disabled) (SEC-M01)
     // ──────────────────────────────────────────────────────────────
 
     /// @notice Pre-authorize an address without requiring a ZK proof (owner only)
     /// @param agent The address to authorize
     function preAuthorize(address agent) external {
         require(msg.sender == owner, "Not owner");
-        if (!authorized[agent]) {
-            authorized[agent] = true;
+        if (preAuthDisabled) revert PreAuthDisabled();
+        if (block.timestamp >= authorizedUntil[agent]) {
+            authorizedUntil[agent] = block.timestamp + AUTH_TTL;
             authorizedCount++;
             emit AgentAuthorized(agent, 0, 0);
         }
+    }
+
+    /// @notice Permanently disable preAuthorize — cannot be re-enabled (owner only)
+    function disablePreAuth() external {
+        require(msg.sender == owner, "Not owner");
+        preAuthDisabled = true;
+        emit PreAuthPermanentlyDisabled();
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // View: check if authorized (convenience)
+    // ──────────────────────────────────────────────────────────────
+
+    /// @notice Check if an address is currently authorized
+    function authorized(address agent) external view returns (bool) {
+        return block.timestamp < authorizedUntil[agent];
     }
 
     // ──────────────────────────────────────────────────────────────

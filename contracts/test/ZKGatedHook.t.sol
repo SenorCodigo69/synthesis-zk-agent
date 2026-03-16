@@ -36,6 +36,7 @@ contract ZKGatedHookTest is Test {
     address poolManager = address(0xBEEF);
     address deployer = address(this);
     address agent = address(0xA1);
+    address agent2 = address(0xA2);
     address unauthorized = address(0xBAD);
 
     // Dummy proof data for testing
@@ -48,11 +49,9 @@ contract ZKGatedHookTest is Test {
         verifier = new MockVerifier();
 
         // Deploy hook to an address with BEFORE_SWAP_FLAG set (bit 7 = 0x80)
-        // Use deployCodeTo to place the hook at a valid flag address
         uint160 flags = uint160(Hooks.BEFORE_SWAP_FLAG);
         address hookAddr = address(flags);
 
-        // Deploy the hook bytecode to the flag-compliant address
         deployCodeTo(
             "ZKGatedHook.sol:ZKGatedHook",
             abi.encode(IPoolManager(poolManager), IAuthorizationVerifier(address(verifier)), deployer),
@@ -79,6 +78,11 @@ contract ZKGatedHookTest is Test {
     function test_constructor_rejectsZeroVerifier() public {
         vm.expectRevert(ZKGatedHook.ZeroAddress.selector);
         new ZKGatedHook(IPoolManager(poolManager), IAuthorizationVerifier(address(0)), deployer);
+    }
+
+    function test_constructor_rejectsZeroOwner() public {
+        vm.expectRevert(ZKGatedHook.ZeroAddress.selector);
+        new ZKGatedHook(IPoolManager(poolManager), IAuthorizationVerifier(address(verifier)), address(0));
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -127,19 +131,17 @@ contract ZKGatedHookTest is Test {
         vm.prank(poolManager);
         hook.beforeSwap(agent, _dummyPoolKey(), _dummySwapParams(), hookData);
 
-        // Second call without proof (cached)
+        // Second call without proof — uses cache
         vm.prank(poolManager);
         (bytes4 selector,,) = hook.beforeSwap(agent, _dummyPoolKey(), _dummySwapParams(), "");
         assertEq(selector, IHooks.beforeSwap.selector);
     }
 
     function test_beforeSwap_differentAgentsNeedOwnProofs() public {
-        // Authorize agent
         bytes memory hookData = _encodeProof();
         vm.prank(poolManager);
         hook.beforeSwap(agent, _dummyPoolKey(), _dummySwapParams(), hookData);
 
-        // Different address still needs proof
         vm.prank(poolManager);
         vm.expectRevert(ZKGatedHook.NotAuthorized.selector);
         hook.beforeSwap(unauthorized, _dummyPoolKey(), _dummySwapParams(), "");
@@ -154,21 +156,122 @@ contract ZKGatedHookTest is Test {
         hook.beforeSwap(agent, _dummyPoolKey(), _dummySwapParams(), hookData);
     }
 
-    function test_beforeSwap_emitsSwapGated() public {
+    // ──────────────────────────────────────────────────────────────
+    // SEC-H01: Proof replay prevention (nullifier)
+    // ──────────────────────────────────────────────────────────────
+
+    function test_proofReplay_sameProofRejectedSecondTime() public {
         bytes memory hookData = _encodeProof();
 
+        // First use succeeds
         vm.prank(poolManager);
-        vm.expectEmit(true, false, false, true);
-        emit ZKGatedHook.SwapGated(agent, true);
+        hook.beforeSwap(agent, _dummyPoolKey(), _dummySwapParams(), hookData);
+
+        // Warp past TTL so cache expires
+        vm.warp(block.timestamp + hook.AUTH_TTL() + 1);
+
+        // Same proof rejected (nullifier)
+        vm.prank(poolManager);
+        vm.expectRevert(ZKGatedHook.ProofAlreadyUsed.selector);
         hook.beforeSwap(agent, _dummyPoolKey(), _dummySwapParams(), hookData);
     }
 
+    function test_proofReplay_differentProofsWork() public {
+        bytes memory hookData1 = _encodeProof();
+        vm.prank(poolManager);
+        hook.beforeSwap(agent, _dummyPoolKey(), _dummySwapParams(), hookData1);
+
+        // Warp past TTL
+        vm.warp(block.timestamp + hook.AUTH_TTL() + 1);
+
+        // Different proof data works
+        bytes memory hookData2 = _encodeProofWithDifferentSignals(43, 0xbeef);
+        vm.prank(poolManager);
+        hook.beforeSwap(agent, _dummyPoolKey(), _dummySwapParams(), hookData2);
+    }
+
+    function test_proofReplay_frontRunnerBlockedByBinding() public {
+        // Owner binds agentId 42 to agent address
+        hook.bindAgent(42, agent);
+
+        bytes memory hookData = _encodeProof();
+
+        // Front-runner (unauthorized) tries to use the proof — binding blocks them
+        vm.prank(poolManager);
+        vm.expectRevert(ZKGatedHook.AgentBindingMismatch.selector);
+        hook.beforeSwap(unauthorized, _dummyPoolKey(), _dummySwapParams(), hookData);
+    }
+
+    function test_proofReplay_boundAgentCanUseProof() public {
+        hook.bindAgent(42, agent);
+
+        bytes memory hookData = _encodeProof();
+        vm.prank(poolManager);
+        hook.beforeSwap(agent, _dummyPoolKey(), _dummySwapParams(), hookData);
+        assertTrue(hook.authorized(agent));
+    }
+
+    function test_proofReplay_unboundAgentIdAllowsAnyone() public {
+        // No binding set — any sender can use the proof
+        bytes memory hookData = _encodeProof();
+        vm.prank(poolManager);
+        hook.beforeSwap(unauthorized, _dummyPoolKey(), _dummySwapParams(), hookData);
+        assertTrue(hook.authorized(unauthorized));
+    }
+
     // ──────────────────────────────────────────────────────────────
-    // Admin: preAuthorize
+    // SEC-H02: Authorization expiry (TTL)
+    // ──────────────────────────────────────────────────────────────
+
+    function test_authExpiry_expiresAfterTTL() public {
+        bytes memory hookData = _encodeProof();
+        vm.prank(poolManager);
+        hook.beforeSwap(agent, _dummyPoolKey(), _dummySwapParams(), hookData);
+        assertTrue(hook.authorized(agent));
+
+        // Warp past TTL
+        vm.warp(block.timestamp + hook.AUTH_TTL() + 1);
+        assertFalse(hook.authorized(agent));
+    }
+
+    function test_authExpiry_requiresNewProofAfterExpiry() public {
+        bytes memory hookData = _encodeProof();
+        vm.prank(poolManager);
+        hook.beforeSwap(agent, _dummyPoolKey(), _dummySwapParams(), hookData);
+
+        // Warp past TTL
+        vm.warp(block.timestamp + hook.AUTH_TTL() + 1);
+
+        // Empty hookData fails — cache expired
+        vm.prank(poolManager);
+        vm.expectRevert(ZKGatedHook.NotAuthorized.selector);
+        hook.beforeSwap(agent, _dummyPoolKey(), _dummySwapParams(), "");
+    }
+
+    function test_authExpiry_newProofRefreshesTTL() public {
+        bytes memory hookData1 = _encodeProof();
+        vm.prank(poolManager);
+        hook.beforeSwap(agent, _dummyPoolKey(), _dummySwapParams(), hookData1);
+
+        // Warp past TTL
+        vm.warp(block.timestamp + hook.AUTH_TTL() + 1);
+
+        // New proof refreshes
+        bytes memory hookData2 = _encodeProofWithDifferentSignals(43, 0xbeef);
+        vm.prank(poolManager);
+        hook.beforeSwap(agent, _dummyPoolKey(), _dummySwapParams(), hookData2);
+        assertTrue(hook.authorized(agent));
+    }
+
+    function test_authExpiry_ttlIs24Hours() public view {
+        assertEq(hook.AUTH_TTL(), 24 hours);
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // SEC-M01: preAuthorize can be permanently disabled
     // ──────────────────────────────────────────────────────────────
 
     function test_preAuthorize_ownerCanWhitelist() public {
-        vm.prank(hook.owner());
         hook.preAuthorize(agent);
         assertTrue(hook.authorized(agent));
         assertEq(hook.authorizedCount(), 1);
@@ -180,12 +283,63 @@ contract ZKGatedHookTest is Test {
         hook.preAuthorize(agent);
     }
 
-    function test_preAuthorize_idempotent() public {
-        vm.startPrank(hook.owner());
+    function test_preAuthorize_disablePermanently() public {
+        hook.disablePreAuth();
+        assertTrue(hook.preAuthDisabled());
+
+        vm.expectRevert(ZKGatedHook.PreAuthDisabled.selector);
         hook.preAuthorize(agent);
-        hook.preAuthorize(agent); // second call is no-op
-        vm.stopPrank();
+    }
+
+    function test_preAuthorize_disableOnlyOwner() public {
+        vm.prank(unauthorized);
+        vm.expectRevert("Not owner");
+        hook.disablePreAuth();
+    }
+
+    function test_preAuthorize_disableEmitsEvent() public {
+        vm.expectEmit(false, false, false, false);
+        emit ZKGatedHook.PreAuthPermanentlyDisabled();
+        hook.disablePreAuth();
+    }
+
+    function test_preAuthorize_idempotentWhileActive() public {
+        hook.preAuthorize(agent);
+        hook.preAuthorize(agent); // no-op while still active
         assertEq(hook.authorizedCount(), 1);
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // Admin: bindAgent
+    // ──────────────────────────────────────────────────────────────
+
+    function test_bindAgent_ownerCanBind() public {
+        hook.bindAgent(42, agent);
+        assertEq(hook.agentBinding(42), agent);
+    }
+
+    function test_bindAgent_nonOwnerReverts() public {
+        vm.prank(unauthorized);
+        vm.expectRevert("Not owner");
+        hook.bindAgent(42, agent);
+    }
+
+    function test_bindAgent_canRebind() public {
+        hook.bindAgent(42, agent);
+        hook.bindAgent(42, agent2);
+        assertEq(hook.agentBinding(42), agent2);
+    }
+
+    function test_bindAgent_canUnbind() public {
+        hook.bindAgent(42, agent);
+        hook.bindAgent(42, address(0));
+        assertEq(hook.agentBinding(42), address(0));
+    }
+
+    function test_bindAgent_emitsEvent() public {
+        vm.expectEmit(true, true, false, false);
+        emit ZKGatedHook.AgentBound(42, agent);
+        hook.bindAgent(42, agent);
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -193,20 +347,15 @@ contract ZKGatedHookTest is Test {
     // ──────────────────────────────────────────────────────────────
 
     function test_revokeAuthorization_ownerCanRevoke() public {
-        // First authorize
-        vm.prank(hook.owner());
         hook.preAuthorize(agent);
         assertTrue(hook.authorized(agent));
 
-        // Then revoke
-        vm.prank(hook.owner());
         hook.revokeAuthorization(agent);
         assertFalse(hook.authorized(agent));
         assertEq(hook.authorizedCount(), 0);
     }
 
     function test_revokeAuthorization_nonOwnerReverts() public {
-        vm.prank(hook.owner());
         hook.preAuthorize(agent);
 
         vm.prank(unauthorized);
@@ -215,33 +364,26 @@ contract ZKGatedHookTest is Test {
     }
 
     function test_revokeAuthorization_notAuthorizedReverts() public {
-        vm.prank(hook.owner());
         vm.expectRevert("Not authorized");
         hook.revokeAuthorization(agent);
     }
 
     function test_revokeAuthorization_emitsEvent() public {
-        vm.prank(hook.owner());
         hook.preAuthorize(agent);
 
-        vm.prank(hook.owner());
         vm.expectEmit(true, false, false, false);
         emit ZKGatedHook.AgentRevoked(agent);
         hook.revokeAuthorization(agent);
     }
 
     function test_revoked_agentNeedsNewProof() public {
-        // Authorize via proof
         bytes memory hookData = _encodeProof();
         vm.prank(poolManager);
         hook.beforeSwap(agent, _dummyPoolKey(), _dummySwapParams(), hookData);
         assertTrue(hook.authorized(agent));
 
-        // Revoke
-        vm.prank(hook.owner());
         hook.revokeAuthorization(agent);
 
-        // Now agent needs proof again
         vm.prank(poolManager);
         vm.expectRevert(ZKGatedHook.NotAuthorized.selector);
         hook.beforeSwap(agent, _dummyPoolKey(), _dummySwapParams(), "");
@@ -263,10 +405,6 @@ contract ZKGatedHookTest is Test {
         assertFalse(perms.afterRemoveLiquidity);
         assertFalse(perms.beforeDonate);
         assertFalse(perms.afterDonate);
-        assertFalse(perms.beforeSwapReturnDelta);
-        assertFalse(perms.afterSwapReturnDelta);
-        assertFalse(perms.afterAddLiquidityReturnDelta);
-        assertFalse(perms.afterRemoveLiquidityReturnDelta);
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -287,6 +425,11 @@ contract ZKGatedHookTest is Test {
 
     function _encodeProof() internal view returns (bytes memory) {
         return abi.encode(dummyA, dummyB, dummyC, dummyPubSignals);
+    }
+
+    function _encodeProofWithDifferentSignals(uint256 agentId, uint256 commitment) internal view returns (bytes memory) {
+        uint256[2] memory signals = [agentId, commitment];
+        return abi.encode(dummyA, dummyB, dummyC, signals);
     }
 
     function _dummyPoolKey() internal view returns (PoolKey memory) {

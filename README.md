@@ -80,7 +80,7 @@ Built with **Circom 2.2.3** + **snarkjs 0.7.6** (Groth16 proving system). Battle
 
 | Contract | Address | Purpose |
 |---|---|---|
-| `ZKGatedHook.sol` | [`0x859Ae689...`](https://basescan.org/address/0x859Ae689bE007183aC78D364e5550EBc15324080) | **Uniswap V4 Hook** -- gates swaps behind ZK proofs |
+| `ZKGatedHook.sol` | [`0x859Ae689...`](https://basescan.org/address/0x45eC09fB08B83f104F15f3709F4677736112c080) | **Uniswap V4 Hook** -- gates swaps behind ZK proofs |
 | `AuthorizationVerifier.sol` | [`0x2a8FBE80...`](https://basescan.org/address/0x2a8FBE80BDc9cb907b20acBE84F13a858CBEdAe4) | Groth16 verifier for authorization proofs |
 | `BudgetRangeVerifier.sol` | [`0x8d7520a3...`](https://basescan.org/address/0x8d7520a34f3EFbB86d02232C4fc31dB9415142d3) | Groth16 verifier for budget proofs |
 | `CumulativeSpendVerifier.sol` | [`0x1c7A42fe...`](https://basescan.org/address/0x1c7A42fea03ec0C86c94B886588a2680184428D9) | Groth16 verifier for cumulative spend proofs |
@@ -97,7 +97,7 @@ The `ZKGatedHook` is a Uniswap V4 `beforeSwap` hook that gates pool access behin
 4. Valid proof -> agent is authorized and cached (subsequent swaps skip proof verification)
 5. Invalid proof -> swap reverts (unauthorized agents cannot use this pool)
 
-**Address mining:** Uniswap V4 encodes hook permissions in the contract address itself. The hook was deployed via CREATE2 with a mined salt so that the address has `BEFORE_SWAP_FLAG` (bit 7) set: `0x859Ae689bE007183aC78D364e5550EBc15324080` (last byte `0x80`).
+**Address mining:** Uniswap V4 encodes hook permissions in the contract address itself. The hook was deployed via CREATE2 with a mined salt so that the address has `BEFORE_SWAP_FLAG` (bit 7) set: `0x45eC09fB08B83f104F15f3709F4677736112c080` (last byte `0x80`).
 
 ```bash
 # Run the hook demo

@@ -55,7 +55,8 @@ def main():
 
     # ── hookData Encoding Demo ──
     print("── hookData Encoding (ZK Proof → Uniswap V4) ──")
-    # Example proof (would come from snarkjs in production)
+    # NOTE: These are NON-FUNCTIONAL dummy values for demo purposes only.
+    # In production, proofs come from snarkjs after ZK circuit execution.
     dummy_proof = {
         "pA": [
             0x2B2D8F5A24DA3F2A8DE88E64B11E6C1F3D2CA4D4D90A8C7BF9C6D5E6F7A8B9C,

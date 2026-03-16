@@ -1,8 +1,73 @@
 # Security Audit — Synthesis ZK Agent
 
-**Latest:** Audit v3 (2026-03-16) — 13 findings, all 9 actionable fixed
-**Previous:** Audit v2 (2026-03-14) — 16 findings, all actionable fixed | Audit v1 (2026-03-14) — 14 findings, all fixed
-**Cumulative:** 43 total findings across 3 audits, all actionable findings resolved
+**Latest:** Audit v4 (2026-03-16) — 11 findings, all 9 actionable fixed
+**Previous:** Audit v3 (2026-03-16) — 13 findings, all 9 actionable fixed | Audit v2 (2026-03-14) — 16 findings, all actionable fixed | Audit v1 (2026-03-14) — 14 findings, all fixed
+**Cumulative:** 54 total findings across 4 audits, all actionable findings resolved
+
+---
+
+# Audit v4 — ZKGatedHook (2026-03-16)
+
+**Auditor:** Claude Opus 4.6 (automated)
+**Scope:** `ZKGatedHook.sol`, `IAuthorizationVerifier.sol`, `HookMiner.sol`, `DeployZKHook.s.sol`, `hook_client.py`, `demo_hook.py`
+**Codebase:** ~660 LOC new code, 50 Solidity tests + 89 Python tests
+
+## v4 Summary
+
+| Severity | Count | Status |
+|----------|-------|--------|
+| CRITICAL | 0     | --     |
+| HIGH     | 2     | **Fixed** |
+| MEDIUM   | 3     | **Fixed** |
+| LOW      | 4     | **Fixed** (3 code, 1 documented) |
+| INFO     | 2     | Acknowledged |
+
+## Findings
+
+### SEC-H01 [HIGH] — Proof replay: any address can use any valid proof — **FIXED**
+**Problem:** ZK proof in hookData is visible in mempool. Front-runner can copy it and get authorized.
+**Fix:** (1) Proof nullifier — `usedProofHashes` mapping prevents same proof being used twice. (2) Agent binding — `agentBinding` maps agentId to specific Ethereum address. Owner calls `bindAgent()` to lock an agentId to an address. Unbound agents still allow any address (opt-in security).
+**Files:** `ZKGatedHook.sol:138-142, 148-149`
+
+### SEC-H02 [HIGH] — No proof expiry / permanent authorization cache — **FIXED**
+**Problem:** Once authorized, address cached forever. Expired ZK delegations still allow swaps.
+**Fix:** `authorizedUntil` mapping with 24-hour TTL. `authorized()` view function checks `block.timestamp < authorizedUntil[agent]`. Agents must re-prove after TTL expires.
+**Files:** `ZKGatedHook.sol:49, 128-130, 155-158, 196-199`
+
+### SEC-M01 [MEDIUM] — preAuthorize bypasses ZK proof entirely — **FIXED**
+**Problem:** Owner can whitelist any address without ZK proof — backdoor in production.
+**Fix:** Added `preAuthDisabled` flag + `disablePreAuth()` function. Once called, `preAuthorize` permanently reverts. Cannot be re-enabled.
+**Files:** `ZKGatedHook.sol:73, 183-192`
+
+### SEC-M02 [MEDIUM] — Private key stored in Python object attribute — **FIXED**
+**Problem:** `self.private_key` exposed on ZKHookClient. Serialization/logging could leak key.
+**Fix:** Replaced with `_TransactionSigner` class using `__slots__` and underscore-prefixed `_key`. Key never accessible as public attribute.
+**Files:** `hook_client.py:119-133`
+
+### SEC-M03 [MEDIUM] — Hardcoded gas parameters — **FIXED**
+**Problem:** `maxFeePerGas: 0.5 gwei` hardcoded. Gas spikes cause silent failures.
+**Fix:** Dynamic gas pricing: `min(gas_price * 2, 5 gwei ceiling)`. Adapts to network conditions with safety cap.
+**Files:** `hook_client.py:149-152`
+
+### SEC-L01 [LOW] — authorizedCount can underflow (theoretical) — **Safe**
+Protected by Solidity 0.8 checked arithmetic + `require(authorized)` guard.
+
+### SEC-L02 [LOW] — No chain ID validation in Python client — **FIXED**
+**Fix:** Added startup check when private key is provided: `assert chain_id == 8453`.
+**Files:** `hook_client.py:142-146`
+
+### SEC-L03 [LOW] — Demo script contains hardcoded dummy proof values — **FIXED**
+**Fix:** Added comment marking them as non-functional examples.
+**Files:** `demo_hook.py:45`
+
+### SEC-L04 [LOW] — First v1 deployment still on-chain with wrong owner — **Documented**
+`0x78A9E67e97525089C319355244b8c3d494490080` (v1, owner=CREATE2_DEPLOYER) and `0x859Ae689bE007183aC78D364e5550EBc15324080` (v1.1, no security fixes) are deprecated. Current production: `0x45eC09fB08B83f104F15f3709F4677736112c080` (v2, all fixes applied).
+
+### SEC-I01 [INFO] — SwapGated event removed from cached path
+Removed `SwapGated` event from cached authorization path to save ~2k gas per swap.
+
+### SEC-I02 [INFO] — HookMiner has 100k iteration limit
+Sufficient for single-flag hooks. Document for future multi-flag deployments.
 
 ---
 
