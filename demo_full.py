@@ -519,27 +519,61 @@ async def main(live: bool = False, use_ai: bool = False):
         print(f"  Skipped — missing API key or private key")
 
     # ================================================================
-    # STEP 6: EARN — Deposit for yield
+    # STEP 6: EARN — Yield via LP or Lending
     # ================================================================
-    step(6, "EARN — Yield Deposit", ">>")
+    step(6, "EARN — Yield via LP or Lending", ">>")
 
     if swap_result:
         usdc_bal, weth_bal = await get_balances(w3, WALLET)
         print(f"  Updated USDC: ${usdc_bal:,.6f}")
+        print(f"  Updated WETH: {weth_bal:.8f}")
 
-    if usdc_bal > Decimal("1") and yield_rates:
-        best_rate = max(yield_rates, key=lambda r: r["apy"])
-        print(f"  Best protocol: {best_rate['protocol']} ({best_rate['apy']:.2%} APY)")
-        deposit_amount = usdc_bal * Decimal("0.8")
-        print(f"  Deposit:       ${deposit_amount:,.2f} (80% of balance)")
-        print(f"  Reserve:       ${usdc_bal - deposit_amount:,.2f} (20% liquid)")
-        print(f"  Est. annual:   ${deposit_amount * Decimal(str(best_rate['apy'])):,.2f}")
+    # Compare LP vs lending yields
+    best_lp_apy = Decimal("0")
+    best_lp_pair = "N/A"
+    if lp_pools:
+        best_lp = max(lp_pools[:5], key=lambda p: p["fee_apy"])
+        best_lp_apy = Decimal(str(best_lp["fee_apy"]))
+        best_lp_pair = best_lp["pair"]
 
+    best_lending_apy = Decimal("0")
+    best_lending_proto = "N/A"
+    if yield_rates:
+        best_lending = max(yield_rates, key=lambda r: r["apy"])
+        best_lending_apy = Decimal(str(best_lending["apy"]))
+        best_lending_proto = best_lending["protocol"]
+
+    print(f"  Yield Comparison:")
+    print(f"    LP (Uniswap):  {best_lp_pair} @ {best_lp_apy:.2%} fee APY (IL risk)")
+    print(f"    Lending:       {best_lending_proto} @ {best_lending_apy:.2%} APY (no IL)")
+    print()
+
+    # Option A: LP position (if we have both tokens)
+    if weth_bal > Decimal("0.0001") and usdc_bal > Decimal("1"):
+        print(f"  Option A: Uniswap V3 LP (full-range WETH-USDC)")
+        print(f"    Would deposit: {weth_bal:.8f} WETH + ${usdc_bal:,.2f} USDC")
+        print(f"    Fee tier:      0.05% (tick spacing 10)")
+        print(f"    Est. APY:      {best_lp_apy:.2%} (from swap fees)")
+        print(f"    Risk:          Impermanent loss if ETH/USDC price diverges")
         if live:
-            print(f"  [Would deposit via {best_rate['protocol']} adapter]")
+            print(f"    [Would mint via NonfungiblePositionManager]")
         else:
-            print(f"  [DRY RUN — add --live to deposit]")
-    else:
+            print(f"    [DRY RUN — add --live to mint LP position]")
+        print()
+
+    # Option B: Lending (USDC only, no IL)
+    if usdc_bal > Decimal("1") and yield_rates:
+        deposit_amount = usdc_bal * Decimal("0.8")
+        print(f"  Option B: Lending ({best_lending_proto})")
+        print(f"    Would deposit: ${deposit_amount:,.2f} USDC (80%, keep 20% reserve)")
+        print(f"    Est. APY:      {best_lending_apy:.2%}")
+        print(f"    Est. annual:   ${deposit_amount * best_lending_apy:,.2f}")
+        print(f"    Risk:          None (no impermanent loss)")
+        if live:
+            print(f"    [Would deposit via {best_lending_proto} adapter]")
+        else:
+            print(f"    [DRY RUN — add --live to deposit]")
+    elif usdc_bal <= Decimal("1"):
         print(f"  Insufficient USDC for yield deposit (${usdc_bal:,.6f})")
 
     # ================================================================
