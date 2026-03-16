@@ -261,12 +261,15 @@ tests/                 # 81 tests (including hook client)
 
 | Field | Value |
 |---|---|
-| **Track** | Track 2: "Agents that keep secrets" |
-| **Primary AI model** | `claude-opus-4-6` |
-| **Agent harness** | `claude-code` |
+| **Event** | Ethereum Foundation Synthesis Hackathon (March 13-22, 2026) |
+| **Track** | Track 2: "Agents that keep secrets" + Uniswap "Agentic Finance" bounty |
+| **Primary AI model** | `claude-opus-4-6` via `claude-code` |
 | **What we demonstrate** | An autonomous agent that executes DeFi operations with full ZK privacy -- proving authorization and budget compliance without revealing any private data, with human-controlled selective disclosure for compliance. **Includes the first ZK-gated Uniswap V4 Hook** -- only ZK-authorized agents can swap. |
-| **Conversation log** | See main repo [`docs/hackathon/CONVERSATION-LOG.md`](https://github.com/SenorCodigo69/synthesis-zk-agent) |
-| **Repo** | `github.com/SenorCodigo69/synthesis-zk-agent` (public) |
+| **On-chain** | 5 contracts deployed on Base mainnet, ERC-8004 Agent #32271 |
+| **Tests** | 89 Python + 50 Solidity = 139 total |
+| **Security** | 4 audits, 55+ findings, all fixed |
+| **Conversation log** | See [`docs/hackathon/CONVERSATION-LOG.md`](https://github.com/SenorCodigo69/finance_agent/blob/main/docs/hackathon/CONVERSATION-LOG.md) |
+| **Related** | [synthesis-yield-agent](https://github.com/SenorCodigo69/synthesis-yield-agent) (Track 1 + Uniswap Trading API) |
 
 ---
 
