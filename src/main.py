@@ -505,5 +505,44 @@ def private_yield(ctx, owner_key, capital, mode):
     click.echo("=" * 60)
 
 
+@cli.command()
+@click.option("--live", is_flag=True, help="Register on Base mainnet (default: Base Sepolia testnet)")
+@click.option("--rpc-url", default=None, help="RPC URL (default: public Base RPC)")
+@click.pass_context
+def register(ctx, live, rpc_url):
+    """Register the ZK agent on ERC-8004 Identity Registry."""
+    import asyncio
+    from src.erc8004 import register_agent, AgentRegistration
+
+    network = "base_mainnet" if live else "base_sepolia"
+
+    if not rpc_url:
+        rpc_url = (
+            "https://mainnet.base.org" if live
+            else "https://sepolia.base.org"
+        )
+
+    private_key = os.environ.get("DEPLOYER_PRIVATE_KEY")
+    if not private_key:
+        private_key = click.prompt("Deployer private key (Ethereum)", hide_input=True)
+
+    reg = AgentRegistration()
+    click.echo("=== ERC-8004 Agent Registration ===")
+    click.echo(f"Network:      {network}")
+    click.echo(f"RPC URL:      {rpc_url}")
+    click.echo(f"Agent name:   {reg.name}")
+    click.echo(f"Capabilities: {', '.join(['zk-authorization', 'budget-range-proofs', 'cumulative-spend-proofs', 'selective-disclosure', 'privacy-preserving-execution', 'groth16-verification'])}")
+    click.echo("")
+    click.echo("Submitting registration transaction...")
+
+    block = asyncio.run(register_agent(rpc_url, private_key, network))
+
+    if block:
+        click.echo(f"\nRegistration successful! Block: {block}")
+        click.echo("Your agent now has a verifiable on-chain identity (ERC-721 NFT).")
+    else:
+        click.echo("\nRegistration failed. Check logs for details.")
+
+
 if __name__ == "__main__":
     cli()

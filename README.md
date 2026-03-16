@@ -85,6 +85,25 @@ Built with **Circom 2.2.3** + **snarkjs 0.7.6** (Groth16 proving system). Battle
 | `AuthorizationVerifier.sol` | Groth16 verifier for authorization proofs |
 | `CumulativeSpendVerifier.sol` | Groth16 verifier for cumulative spend proofs |
 
+## ERC-8004 Agent Identity
+
+The agent registers on the [ERC-8004 Identity Registry](https://eips.ethereum.org/EIPS/eip-8004), giving it a verifiable on-chain identity (ERC-721 NFT) with declared capabilities:
+
+- `zk-authorization` -- proves delegation without revealing owner
+- `budget-range-proofs` -- proves budget compliance without revealing limits
+- `cumulative-spend-proofs` -- proves running totals without revealing history
+- `selective-disclosure` -- human-controlled audience-specific proofs
+- `privacy-preserving-execution` -- ZK-gated DeFi operations
+- `groth16-verification` -- on-chain proof verification
+
+```bash
+# Register on Base Sepolia testnet
+python -m src register
+
+# Register on Base mainnet
+python -m src register --live
+```
+
 ---
 
 ## Quick Start
@@ -122,6 +141,8 @@ python -m src.main prove-auth --agent-id 1                             # Authori
 python -m src.main execute --amount 2000 --protocol aave-v3            # Private execution (paper)
 python -m src.main disclose --level auditor                            # Selective disclosure
 python -m src.main status                                              # Agent status
+python -m src.main register                                            # ERC-8004 registration (testnet)
+python -m src.main register --live                                     # ERC-8004 registration (mainnet)
 ```
 
 ---
@@ -194,9 +215,10 @@ src/
   zk/                  # Proof engine, keys, commitment scheme
   privacy/             # Policy manager, executor, disclosure controller
   chain/               # Contract deployment, on-chain verification
-  main.py              # CLI (7 commands + demo)
+  erc8004.py           # ERC-8004 agent identity registration
+  main.py              # CLI (9 commands + demo)
   database.py          # SQLite persistence
-tests/                 # 49 tests
+tests/                 # 59+ tests
 ```
 
 ## Tech Stack
