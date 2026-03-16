@@ -1,0 +1,140 @@
+{
+  "name": "Synthesis ZK Agent",
+  "version": "1.0.0",
+  "description": "Privacy-preserving DeFi agent using zero-knowledge proofs. Proves compliance (authorization, budget, cumulative spend) without revealing private data. Groth16 proofs verified on-chain via Uniswap V4 hook.",
+  "operator_wallet": "0x8d691720bF8C81044DB1a77b82D0eF5f5bffdE6C",
+  "identity": {
+    "erc8004_registrations": [
+      {
+        "id": 32271,
+        "label": "ZK Agent",
+        "chain": "base",
+        "purpose": "Zero-knowledge proof generation for private DeFi operations"
+      }
+    ]
+  },
+  "supported_tools": [
+    {
+      "name": "snarkjs_prover",
+      "type": "zk_proving",
+      "description": "Groth16 proof generation and verification via snarkjs CLI",
+      "capabilities": ["witness_generation", "proof_generation", "proof_verification", "calldata_export"]
+    },
+    {
+      "name": "circom_circuits",
+      "type": "zk_circuits",
+      "description": "Three ZK circuits: authorization, budget_range, cumulative_spend",
+      "capabilities": ["eddsa_verification", "range_proofs", "poseidon_hashing", "commitment_chaining"]
+    },
+    {
+      "name": "eddsa_keygen",
+      "type": "cryptography",
+      "description": "Baby JubJub EdDSA key generation and signing via Node.js (@zk-kit/eddsa-poseidon)",
+      "capabilities": ["keypair_generation", "message_signing", "poseidon_hashing"]
+    },
+    {
+      "name": "zkgated_hook",
+      "type": "smart_contract",
+      "description": "Uniswap V4 Hook on Base mainnet — gates swaps with Groth16 proof verification",
+      "address": "0x45eC09fB08B83f104F15f3709F4677736112c080",
+      "chain": "base"
+    },
+    {
+      "name": "authorization_verifier",
+      "type": "smart_contract",
+      "description": "On-chain Groth16 verifier for agent authorization proofs",
+      "address": "0x2a8FBE80BDc9cb907b20acBE84F13a858CBEdAe4",
+      "chain": "base"
+    },
+    {
+      "name": "budget_range_verifier",
+      "type": "smart_contract",
+      "description": "On-chain Groth16 verifier for budget range proofs",
+      "address": "0x8d7520a34f3EFbB86d02232C4fc31dB9415142d3",
+      "chain": "base"
+    },
+    {
+      "name": "cumulative_spend_verifier",
+      "type": "smart_contract",
+      "description": "On-chain Groth16 verifier for cumulative spend proofs",
+      "address": "0x1c7A42fea03ec0C86c94B886588a2680184428D9",
+      "chain": "base"
+    },
+    {
+      "name": "policy_commitment",
+      "type": "smart_contract",
+      "description": "Stores hashed delegation policies on-chain (Poseidon commitments)",
+      "address": "0x049B09c4aE1974F84164b65a9f0AB412dA9814f2",
+      "chain": "base"
+    },
+    {
+      "name": "sqlite_database",
+      "type": "persistence",
+      "description": "Encrypted SQLite database for delegations, spend records, proofs, and disclosure log (Fernet encryption for sensitive fields)"
+    }
+  ],
+  "tech_stacks": ["python", "circom", "snarkjs", "groth16", "web3", "sqlite", "node.js"],
+  "compute_constraints": {
+    "proof_generation_timeout_sec": 30,
+    "max_proofs_per_action": 3,
+    "max_actions_per_cycle": 10,
+    "token_budget_tracking": true
+  },
+  "task_categories": [
+    "zk_proof_generation",
+    "privacy_preserving_execution",
+    "compliance_verification",
+    "selective_disclosure",
+    "on_chain_verification",
+    "delegation_management",
+    "defi_yield_privacy"
+  ],
+  "safety_guardrails": {
+    "paper_mode_default": true,
+    "live_mode_requires_explicit_flag": true,
+    "max_single_spend_usdc": 5000,
+    "period_limit_usdc": 10000,
+    "delegation_ttl_seconds": 604800,
+    "all_proofs_must_verify_before_execution": true,
+    "fail_closed_on_proof_failure": true,
+    "nonce_anti_replay": true,
+    "sensitive_fields_encrypted": true,
+    "owner_identity_never_revealed": true,
+    "spend_limits_never_revealed": true
+  },
+  "autonomous_loop": {
+    "steps": [
+      "OBSERVE: Receive action request (deposit/withdraw) with amount and target protocol",
+      "DELEGATE: Create or load signed delegation from owner (EdDSA, Poseidon commitment)",
+      "PROVE_AUTH: Generate authorization ZK proof — agent is delegated by owner (hides identity + limits)",
+      "PROVE_BUDGET: Generate budget range ZK proof — amount <= max_single_spend (hides budget)",
+      "PROVE_CUMULATIVE: Generate cumulative spend ZK proof — running total <= period_limit (hides history)",
+      "VERIFY: All 3 proofs must pass off-chain verification before execution",
+      "EXECUTE: If compliant, simulate (paper) or execute (live) the DeFi action",
+      "COMMIT: Update state — record spend, update cumulative commitment with new salt",
+      "DISCLOSE: On request, generate audience-specific proofs (auditor/tax/public) with selective visibility"
+    ],
+    "self_correction": [
+      "Fail-closed: any proof verification failure rejects the action entirely",
+      "Cumulative tracking: running total prevents budget overrun across multiple actions",
+      "Nonce sequencing: prevents replay of spent delegations",
+      "Commitment chaining: each spend produces new commitment, maintaining integrity",
+      "Graceful degradation: proof generation failures logged with recoverability flag"
+    ]
+  },
+  "execution_log": {
+    "format": "json",
+    "path": "data/agent_log.json",
+    "captures": [
+      "cycle_id",
+      "timestamp",
+      "step_name",
+      "tool_calls (prover/verifier/chain)",
+      "decisions (comply/reject with proof results)",
+      "proof_results (public_signals, verified, proof_type)",
+      "executions (action, amount, protocol, status, tx_hash)",
+      "failures (component, error, recoverable)",
+      "final_outputs (proofs_generated, actions_executed, cumulative_state)"
+    ]
+  }
+}

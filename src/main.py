@@ -16,6 +16,7 @@ from src.privacy.policy import PolicyManager
 from src.privacy.executor import PrivateExecutor
 from src.privacy.disclosure import DisclosureController
 from src.database import Database
+from src.execution_logger import ExecutionLogger
 
 
 def _get_owner_key(owner_key: str | None) -> str:
@@ -212,26 +213,60 @@ def execute(ctx, owner_key, amount, protocol, mode):
         delegation, config["spending_policy"]["period_limit"]
     )
 
+    # Execution logger
+    exec_logger = ExecutionLogger()
+    exec_logger.begin_cycle(int(time.time()), mode)
+
     click.echo("Running compliance checks...")
+    exec_logger.log_step("compliance_check", "ok", f"deposit {amount} USDC → {protocol}")
     result = executor.execute_private_action("deposit", amount, protocol, state)
 
+    # Log proofs
+    proofs = result.get("proofs", {})
+    proofs_generated = 0
+    proofs_verified = 0
+    for ptype, pdata in proofs.items():
+        if pdata:
+            proofs_generated += 1
+            verified = bool(pdata.get("public_signals"))
+            if verified:
+                proofs_verified += 1
+            exec_logger.log_proof(ptype, verified, pdata.get("public_signals", []))
+            exec_logger.log_tool_call("snarkjs", f"prove_{ptype}", "success")
+
+    # Log decision
+    compliant = result["compliance"]["compliant"]
+    exec_logger.log_decision(
+        "compliance_check",
+        "approved" if compliant else "rejected",
+        result["compliance"].get("reason", ""),
+    )
+
     click.echo(f"\nStatus: {result['status']}")
-    click.echo(f"Compliant: {result['compliance']['compliant']}")
+    click.echo(f"Compliant: {compliant}")
 
     if result["status"] == "REJECTED":
         click.echo(f"Reason: {result['reason']}")
+        exec_logger.log_execution(protocol, "deposit", amount, "REJECTED")
     else:
         click.echo(f"Tx Hash: {result.get('tx_hash', 'N/A')}")
         updated = result.get("updated_state", {})
         click.echo(f"Cumulative Total: {updated.get('cumulative_total', 0)} USDC")
         click.echo(f"Spend Count: {updated.get('spend_count', 0)}")
+        exec_logger.log_execution(protocol, "deposit", amount, result["status"], result.get("tx_hash", ""))
 
-    # Show proof summary
-    proofs = result.get("proofs", {})
     click.echo(f"\nProofs generated:")
     for ptype, pdata in proofs.items():
         if pdata:
             click.echo(f"  {ptype}: {len(pdata.get('public_signals', []))} public signals")
+
+    exec_logger.end_cycle({
+        "proofs_generated": proofs_generated,
+        "proofs_verified": proofs_verified,
+        "actions_executed": 1 if result["status"] != "REJECTED" else 0,
+        "actions_rejected": 1 if result["status"] == "REJECTED" else 0,
+        "cumulative_total": result.get("updated_state", {}).get("cumulative_total", 0),
+    })
 
 
 @cli.command()
@@ -464,8 +499,14 @@ def private_yield(ctx, owner_key, capital, mode):
     click.echo(f"Agent {delegation.agent_id} delegated, spend limit: {delegation.spend_limit} USDC")
     click.echo(f"Policy commitment: {delegation.policy_commitment[:30]}...")
 
+    # Execution logger
+    exec_logger = ExecutionLogger()
+    exec_logger.begin_cycle(int(time.time()), mode)
+    exec_logger.log_step("fetch_yield_plan", "ok", f"{len(allocs)} allocations from yield agent")
+
     # Step 3: Execute with ZK proof gates
     click.echo("\n--- Step 3: Execute with ZK privacy ---")
+    exec_logger.log_step("create_delegation", "ok", f"agent {delegation.agent_id}, limit {delegation.spend_limit}")
     from src.bridge.private_yield import PrivateYieldExecutor, actions_from_yield_plan
 
     bridge = PrivateYieldExecutor(prover, policy_mgr, state, exec_mode)
@@ -482,6 +523,20 @@ def private_yield(ctx, owner_key, capital, mode):
         if r["status"] == "REJECTED":
             click.echo(f"       Reason: {r['reason']}")
 
+        # Log each execution
+        exec_logger.log_execution(r["protocol"], r["action"], r["amount_usd"], r["status"], r.get("tx_hash", ""))
+        exec_logger.log_decision(
+            "zk_compliance",
+            "approved" if r["zk_compliant"] else "rejected",
+            r.get("reason", ""),
+        )
+        # Log proofs if present
+        proofs = r.get("proofs", {})
+        if isinstance(proofs, dict):
+            for ptype in proofs:
+                exec_logger.log_proof(ptype, r["zk_compliant"])
+                exec_logger.log_tool_call("snarkjs", f"prove_{ptype}", "success" if r["zk_compliant"] else "fail")
+
     # Step 4: Summary
     summary = bridge.get_summary()
     click.echo(f"\n--- Summary ---")
@@ -497,6 +552,14 @@ def private_yield(ctx, owner_key, capital, mode):
     click.echo(f"  Auditor view: {', '.join(disc['allowed_claims'])}")
     click.echo(f"  Public view:  proof_of_compliance only")
     click.echo(f"  Hidden:       individual transactions, protocol names, exact balances")
+
+    exec_logger.end_cycle({
+        "proofs_generated": summary.get("proof_count", 0),
+        "proofs_verified": summary.get("proof_count", 0) - summary.get("rejected", 0),
+        "actions_executed": summary.get("executed", 0),
+        "actions_rejected": summary.get("rejected", 0),
+        "cumulative_total": summary.get("cumulative_total", 0),
+    })
 
     click.echo("\n" + "=" * 60)
     click.echo("  PRIVATE YIELD COMPLETE")
