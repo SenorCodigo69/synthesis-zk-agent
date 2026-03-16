@@ -4,7 +4,7 @@
 
 An autonomous DeFi yield agent that operates **privately**. It scans protocols for best USDC yield, deposits and withdraws using ZK-authorized spending proofs, hides balances and strategy from chain observers, and supports selective disclosure for compliance -- all without revealing private data on-chain.
 
-**Stack:** Circom / Groth16 / Baby JubJub EdDSA / snarkjs / Foundry / Base chain / Python
+**Stack:** Circom / Groth16 / Baby JubJub EdDSA / snarkjs / **Uniswap V4 Hooks** / Foundry / Base chain / Python
 
 ---
 
@@ -76,14 +76,36 @@ Built with **Circom 2.2.3** + **snarkjs 0.7.6** (Groth16 proving system). Battle
 
 ---
 
-## On-Chain Contracts
+## On-Chain Contracts (Base Mainnet)
 
-| Contract | Purpose |
-|---|---|
-| `PolicyCommitment.sol` | Stores hashed spending policies on-chain (nothing revealed) |
-| `BudgetRangeVerifier.sol` | Groth16 verifier for budget proofs (exported by snarkjs) |
-| `AuthorizationVerifier.sol` | Groth16 verifier for authorization proofs |
-| `CumulativeSpendVerifier.sol` | Groth16 verifier for cumulative spend proofs |
+| Contract | Address | Purpose |
+|---|---|---|
+| `ZKGatedHook.sol` | [`0x859Ae689...`](https://basescan.org/address/0x859Ae689bE007183aC78D364e5550EBc15324080) | **Uniswap V4 Hook** -- gates swaps behind ZK proofs |
+| `AuthorizationVerifier.sol` | [`0x2a8FBE80...`](https://basescan.org/address/0x2a8FBE80BDc9cb907b20acBE84F13a858CBEdAe4) | Groth16 verifier for authorization proofs |
+| `BudgetRangeVerifier.sol` | [`0x8d7520a3...`](https://basescan.org/address/0x8d7520a34f3EFbB86d02232C4fc31dB9415142d3) | Groth16 verifier for budget proofs |
+| `CumulativeSpendVerifier.sol` | [`0x1c7A42fe...`](https://basescan.org/address/0x1c7A42fea03ec0C86c94B886588a2680184428D9) | Groth16 verifier for cumulative spend proofs |
+| `PolicyCommitment.sol` | [`0x049B09c4...`](https://basescan.org/address/0x049B09c4aE1974F84164b65a9f0AB412dA9814f2) | Stores hashed spending policies (nothing revealed) |
+
+## Uniswap V4 Hook -- ZK-Gated Swaps
+
+The `ZKGatedHook` is a Uniswap V4 `beforeSwap` hook that gates pool access behind Groth16 ZK proofs. This is the first production ZK access-control hook on Uniswap V4.
+
+**How it works:**
+1. Agent generates a ZK authorization proof (proving delegation without revealing owner)
+2. Proof is ABI-encoded as `hookData` in the Uniswap V4 swap call
+3. `beforeSwap()` decodes the proof and calls `AuthorizationVerifier.verifyProof()` on-chain
+4. Valid proof -> agent is authorized and cached (subsequent swaps skip proof verification)
+5. Invalid proof -> swap reverts (unauthorized agents cannot use this pool)
+
+**Address mining:** Uniswap V4 encodes hook permissions in the contract address itself. The hook was deployed via CREATE2 with a mined salt so that the address has `BEFORE_SWAP_FLAG` (bit 7) set: `0x859Ae689bE007183aC78D364e5550EBc15324080` (last byte `0x80`).
+
+```bash
+# Run the hook demo
+python demo_hook.py
+
+# Run hook client tests
+pytest tests/test_hook_client.py -v
+```
 
 ## ERC-8004 Agent Identity
 
@@ -123,7 +145,7 @@ bash scripts/setup.sh
 # Run the full demo
 python -m src.main demo
 
-# Run tests (49 Python + 12 Solidity)
+# Run tests (81 Python + 33 Solidity)
 pytest                        # Python tests
 cd contracts && forge test    # Solidity tests
 ```
@@ -218,7 +240,7 @@ src/
   erc8004.py           # ERC-8004 agent identity registration
   main.py              # CLI (9 commands + demo)
   database.py          # SQLite persistence
-tests/                 # 59+ tests
+tests/                 # 81 tests (including hook client)
 ```
 
 ## Tech Stack
@@ -228,7 +250,7 @@ tests/                 # 59+ tests
 - **snarkjs 0.7.6** -- Groth16 proof generation and verification
 - **Baby JubJub EdDSA** -- key management (@zk-kit/eddsa-poseidon)
 - **Poseidon hash** -- ZK-friendly hashing (poseidon-lite)
-- **Solidity 0.8.28** -- on-chain verifier contracts
+- **Solidity 0.8.26** -- on-chain verifier contracts + Uniswap V4 hook
 - **Foundry** -- contract compilation, testing, deployment
 - **Base chain** -- deployment target
 - **SQLite** -- local state, audit trail
@@ -242,7 +264,7 @@ tests/                 # 59+ tests
 | **Track** | Track 2: "Agents that keep secrets" |
 | **Primary AI model** | `claude-opus-4-6` |
 | **Agent harness** | `claude-code` |
-| **What we demonstrate** | An autonomous agent that executes DeFi operations with full ZK privacy -- proving authorization and budget compliance without revealing any private data, with human-controlled selective disclosure for compliance |
+| **What we demonstrate** | An autonomous agent that executes DeFi operations with full ZK privacy -- proving authorization and budget compliance without revealing any private data, with human-controlled selective disclosure for compliance. **Includes the first ZK-gated Uniswap V4 Hook** -- only ZK-authorized agents can swap. |
 | **Conversation log** | See main repo [`docs/hackathon/CONVERSATION-LOG.md`](https://github.com/SenorCodigo69/synthesis-zk-agent) |
 | **Repo** | `github.com/SenorCodigo69/synthesis-zk-agent` (public) |
 

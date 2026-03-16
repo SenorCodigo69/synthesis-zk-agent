@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.28;
+pragma solidity ^0.8.24;
 
 /// @title PolicyCommitment — On-chain spending scope commitment for ZK-authorized agents
 /// @notice Stores hashed policy commitments that ZK proofs reference.

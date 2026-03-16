@@ -2,7 +2,16 @@
 src = "src"
 out = "out"
 libs = ["lib"]
-solc = "0.8.28"
+solc = "0.8.26"
+evm_version = "cancun"
+ffi = true
+
+remappings = [
+    "v4-core/=lib/v4-core/src/",
+    "v4-periphery/=lib/v4-periphery/",
+    "forge-std/=lib/forge-std/src/",
+    "@openzeppelin/=lib/v4-core/lib/openzeppelin-contracts/",
+]
 
 [profile.default.fmt]
 line_length = 120

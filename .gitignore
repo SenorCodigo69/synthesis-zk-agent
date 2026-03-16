@@ -13,6 +13,10 @@ contracts/out/
 contracts/cache/
 contracts/foundry.lock
 
+# Foundry dependencies (install via forge install)
+contracts/lib/v4-core/
+contracts/lib/v4-periphery/
+
 # Keys and secrets
 .env
 *.key
