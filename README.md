@@ -128,6 +128,15 @@ python -m src register --live
 
 ---
 
+## Execution Logger ("Let the Agent Cook")
+
+Machine-readable audit trail for the [Protocol Labs / EF bounty](https://synthesis.md/):
+
+- **`agent.json`** — capability manifest declaring all 5 on-chain contracts, ZK tools (snarkjs, circom, EdDSA), safety guardrails (fail-closed on proof failure, nonce anti-replay), and 9-step autonomous loop
+- **`src/execution_logger.py`** — structured JSON logger with ZK-specific `log_proof()` method (proof_type, verified, public_signals_count) alongside standard step/decision/execution/failure tracking
+- **Output:** `data/agent_log.json` — bounded to 500 cycles, corrupt file recovery, safe serialization
+- **Integration:** Hooked into `execute` and `private-yield` CLI commands
+
 ## Quick Start
 
 ```bash
@@ -145,7 +154,7 @@ bash scripts/setup.sh
 # Run the full demo
 python -m src.main demo
 
-# Run tests (81 Python + 33 Solidity)
+# Run tests (119 Python + 33 Solidity)
 pytest                        # Python tests
 cd contracts && forge test    # Solidity tests
 ```
@@ -240,7 +249,8 @@ src/
   erc8004.py           # ERC-8004 agent identity registration
   main.py              # CLI (9 commands + demo)
   database.py          # SQLite persistence
-tests/                 # 81 tests (including hook client)
+  execution_logger.py  # Structured JSON execution logger (agent.json companion)
+tests/                 # 119 tests (including hook client + execution logger)
 ```
 
 ## Tech Stack
@@ -262,11 +272,11 @@ tests/                 # 81 tests (including hook client)
 | Field | Value |
 |---|---|
 | **Event** | Ethereum Foundation Synthesis Hackathon (March 13-22, 2026) |
-| **Track** | Track 2: "Agents that keep secrets" + Uniswap "Agentic Finance" bounty |
+| **Track** | Track 2: "Agents that keep secrets" + Uniswap "Agentic Finance" bounty + "Let the Agent Cook" bounty |
 | **Primary AI model** | `claude-opus-4-6` via `claude-code` |
 | **What we demonstrate** | An autonomous agent that executes DeFi operations with full ZK privacy -- proving authorization and budget compliance without revealing any private data, with human-controlled selective disclosure for compliance. **Includes the first ZK-gated Uniswap V4 Hook** -- only ZK-authorized agents can swap. |
 | **On-chain** | 5 contracts deployed on Base mainnet, ERC-8004 Agent #32271 |
-| **Tests** | 89 Python + 50 Solidity = 139 total |
+| **Tests** | 119 Python + 50 Solidity = 169 total |
 | **Security** | 4 audits, 55+ findings, all fixed |
 | **Conversation log** | See [`docs/hackathon/CONVERSATION-LOG.md`](https://github.com/SenorCodigo69/finance_agent/blob/main/docs/hackathon/CONVERSATION-LOG.md) |
 | **Related** | [synthesis-yield-agent](https://github.com/SenorCodigo69/synthesis-yield-agent) (Track 1 + Uniswap Trading API), [synthesis-steth-treasury](https://github.com/SenorCodigo69/synthesis-steth-treasury) (Lido bounty — stETH yield-bearing agent budget) |
