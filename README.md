@@ -279,7 +279,7 @@ tests/                 # 119 tests (including hook client + execution logger)
 | **Tests** | 119 Python + 50 Solidity = 169 total |
 | **Security** | 4 audits, 55+ findings, all fixed |
 | **Conversation log** | See [`docs/hackathon/CONVERSATION-LOG.md`](https://github.com/SenorCodigo69/finance_agent/blob/main/docs/hackathon/CONVERSATION-LOG.md) |
-| **Related** | [synthesis-yield-agent](https://github.com/SenorCodigo69/synthesis-yield-agent) (Track 1 + Uniswap Trading API), [synthesis-steth-treasury](https://github.com/SenorCodigo69/synthesis-steth-treasury) (Lido bounty — stETH yield-bearing agent budget) |
+| **Related** | [synthesis-yield-agent](https://github.com/SenorCodigo69/synthesis-yield-agent) (Track 1 + Uniswap Trading API + AI-driven concentrated LP), [synthesis-steth-treasury](https://github.com/SenorCodigo69/synthesis-steth-treasury) (Lido bounty — stETH yield-bearing agent budget) |
 
 ---
 
