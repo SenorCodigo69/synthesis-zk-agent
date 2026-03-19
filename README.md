@@ -85,8 +85,11 @@ Built with **Circom 2.2.3** + **snarkjs 0.7.6** (Groth16 proving system). Battle
 | `BudgetRangeVerifier.sol` | [`0x8d7520a3...`](https://basescan.org/address/0x8d7520a34f3EFbB86d02232C4fc31dB9415142d3) | Groth16 verifier for budget proofs |
 | `CumulativeSpendVerifier.sol` | [`0x1c7A42fe...`](https://basescan.org/address/0x1c7A42fea03ec0C86c94B886588a2680184428D9) | Groth16 verifier for cumulative spend proofs |
 | `PolicyCommitment.sol` | [`0x049B09c4...`](https://basescan.org/address/0x049B09c4aE1974F84164b65a9f0AB412dA9814f2) | Stores hashed spending policies (nothing revealed) |
+| `DynamicFeeHook.sol` | Deployed on Base | **Uniswap V4 Hook** -- agent volatility signals control pool fees |
 
-## Uniswap V4 Hook -- ZK-Gated Swaps
+## Uniswap V4 Hooks
+
+### ZK-Gated Swaps
 
 The `ZKGatedHook` is a Uniswap V4 `beforeSwap` hook that gates pool access behind Groth16 ZK proofs. This is the first production ZK access-control hook on Uniswap V4.
 
@@ -106,6 +109,17 @@ python demo_hook.py
 # Run hook client tests
 pytest tests/test_hook_client.py -v
 ```
+
+### DynamicFeeHook -- Agent-Controlled Pool Fees
+
+The `DynamicFeeHook` is a Uniswap V4 hook where the agent's volatility signals dynamically adjust swap fees. High volatility = higher fees (protecting LPs from IL), low volatility = lower fees (attracting volume).
+
+- `beforeInitialize()` — registers the pool with dynamic fee flag
+- `beforeSwap()` — agent pushes updated fee based on real-time volatility analysis
+- Fee bounds enforced on-chain (min 0.01%, max 1%) — agent cannot set predatory fees
+- Owner-only fee updates — only the authorized agent can adjust fees
+
+**24 Foundry tests** covering fee updates, bounds enforcement, access control, and pool lifecycle.
 
 ## ERC-8004 Agent Identity
 
@@ -154,9 +168,9 @@ bash scripts/setup.sh
 # Run the full demo
 python -m src.main demo
 
-# Run tests (119 Python + 33 Solidity)
+# Run tests (119 Python + 74 Solidity)
 pytest                        # Python tests
-cd contracts && forge test    # Solidity tests
+cd contracts && forge test    # Solidity tests (ZKGatedHook, DynamicFeeHook, PolicyCommitment)
 ```
 
 ## CLI Commands
@@ -199,12 +213,16 @@ Each disclosure generates a purpose-specific ZK proof. The auditor gets a proof 
 
 ## Security
 
-Two full security audits completed (2026-03-14). **30 total findings, all actionable findings fixed.**
+**4 security audits completed** — 54 total findings, all actionable findings fixed.
 
-**Audit v1:** 14 findings (2 CRITICAL, 3 HIGH, 4 MEDIUM, 5 LOW) -- all 14 fixed.
-**Audit v2:** 16 findings (0 CRITICAL, 2 HIGH, 4 MEDIUM, 5 LOW, 5 INFO) -- all 11 actionable findings fixed.
+| Audit | Scope | Findings | Fixed |
+|---|---|---|---|
+| v1 | Core ZK engine + privacy layer | 14 (2 CRIT, 3 HIGH) | All 14 |
+| v2 | Full codebase | 16 (2 HIGH, 4 MEDIUM) | All actionable |
+| v3 | Hook client + deployment | 13 (9 actionable) | All 9 |
+| v4 | ZKGatedHook + DynamicFeeHook | 11 (2 HIGH, 3 MEDIUM) | All 9 |
 
-Key fixes: contract access control, budget proof linkability, key handling via env vars, PBKDF2 key stretching, nonce persistence, config path validation, chain ID deployment guard, Solidity test coverage (12 Foundry tests).
+Key fixes: proof replay prevention (nullifiers + agent binding), contract access control, budget proof linkability, key handling via env vars, PBKDF2 key stretching, nonce persistence, config path validation, chain ID deployment guard, Solidity test coverage (74 Foundry tests).
 
 See [SECURITY-AUDIT.md](SECURITY-AUDIT.md) for the full report.
 
@@ -225,9 +243,9 @@ EU GDPR recognizes ZK proofs as implementing data minimization (Article 25). Thi
 
 ## Deployment
 
-**Target chain:** Base (cheapest gas, largest Morpho liquidity for USDC yield).
+**Target chain:** Base mainnet (cheapest gas, largest Morpho liquidity for USDC yield).
 
-Contracts are compiled and ready for deployment via Foundry. Testnet deployment pending.
+All 5 contracts deployed and verified on Base mainnet. See the [On-Chain Contracts](#on-chain-contracts-base-mainnet) table for addresses.
 
 ```bash
 # Deploy contracts (requires DEPLOYER_PRIVATE_KEY env var and Base RPC)
@@ -250,7 +268,7 @@ src/
   main.py              # CLI (9 commands + demo)
   database.py          # SQLite persistence
   execution_logger.py  # Structured JSON execution logger (agent.json companion)
-tests/                 # 119 tests (including hook client + execution logger)
+tests/                 # 119 Python tests (including hook client + execution logger)
 ```
 
 ## Tech Stack
@@ -276,8 +294,8 @@ tests/                 # 119 tests (including hook client + execution logger)
 | **Primary AI model** | `claude-opus-4-6` via `claude-code` |
 | **What we demonstrate** | An autonomous agent that executes DeFi operations with full ZK privacy -- proving authorization and budget compliance without revealing any private data, with human-controlled selective disclosure for compliance. **Includes the first ZK-gated Uniswap V4 Hook** -- only ZK-authorized agents can swap. |
 | **On-chain** | 5 contracts deployed on Base mainnet, ERC-8004 Agent #32271 |
-| **Tests** | 119 Python + 50 Solidity = 169 total |
-| **Security** | 4 audits, 55+ findings, all fixed |
+| **Tests** | 119 Python + 74 Solidity = 193 total |
+| **Security** | 4 audits, 54 findings, all actionable fixed |
 | **Conversation log** | See [`docs/hackathon/CONVERSATION-LOG.md`](https://github.com/SenorCodigo69/finance_agent/blob/main/docs/hackathon/CONVERSATION-LOG.md) |
 | **Related** | [synthesis-yield-agent](https://github.com/SenorCodigo69/synthesis-yield-agent) (Track 1 + Uniswap Trading API + AI-driven concentrated LP), [synthesis-steth-treasury](https://github.com/SenorCodigo69/synthesis-steth-treasury) (Lido bounty — stETH yield-bearing agent budget) |
 
