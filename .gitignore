@@ -12,6 +12,7 @@ build/
 contracts/out/
 contracts/cache/
 contracts/foundry.lock
+contracts/broadcast/
 
 # Foundry dependencies (install via forge install)
 contracts/lib/v4-core/
